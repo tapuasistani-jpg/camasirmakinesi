@@ -24,7 +24,10 @@ function Photo({ src }: { src: string | null }) {
 
 export default function Dashboard() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
+  const [authed, setAuthed] = useState(false);
+  const [gateReady, setGateReady] = useState(false);
   const [botToken, setBotToken] = useState("");
   const [chatId, setChatId] = useState("");
   const [minDiscount, setMinDiscount] = useState(80);
@@ -36,7 +39,14 @@ export default function Dashboard() {
   const filled = useRef(false);
 
   useEffect(() => {
-    setPassword(sessionStorage.getItem("camasir-admin") || "");
+    const savedUser = sessionStorage.getItem("camasir-user") || "";
+    const savedPassword = sessionStorage.getItem("camasir-admin") || "";
+    if (savedUser && savedPassword) {
+      setUsername(savedUser);
+      setPassword(savedPassword);
+      setAuthed(true);
+    }
+    setGateReady(true);
   }, []);
 
   async function load() {
@@ -58,7 +68,7 @@ export default function Dashboard() {
   }, []);
 
   function headers(): HeadersInit {
-    return { "Content-Type": "application/json", "x-admin-password": password };
+    return { "Content-Type": "application/json", "x-admin-user": username, "x-admin-password": password };
   }
 
   function say(text: string, ok: boolean) {
@@ -131,7 +141,49 @@ export default function Dashboard() {
     await load();
   }
 
+  async function enter(event: React.FormEvent) {
+    event.preventDefault();
+    const response = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      say(data.error || "Giriş olmadı", false);
+      return;
+    }
+    sessionStorage.setItem("camasir-user", username.trim());
+    sessionStorage.setItem("camasir-admin", password);
+    setNote("");
+    setAuthed(true);
+  }
+
   const fresh = status?.lastScanAt ? Date.now() - new Date(status.lastScanAt).getTime() < 30 * 60 * 1000 : false;
+
+  if (!gateReady) return null;
+
+  if (!authed) {
+    return (
+      <main className="gate">
+        <section className="panel">
+          <p className="brand">ÇAMAŞIRMAKİNESİ</p>
+          <h1>Giriş</h1>
+          <p className="lede">Site içeriği kilitli. Kullanıcı adı ve şifre Vercel ayarındakiyle aynı olmalı.</p>
+          <form onSubmit={enter}>
+            <label>Kullanıcı adı
+              <input value={username} autoComplete="username" onChange={(event) => setUsername(event.target.value)} />
+            </label>
+            <label>Şifre
+              <input type="password" value={password} autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} />
+            </label>
+            <button type="submit">Giriş yap</button>
+            <p className="hint" style={{ color: noteOk ? "#0e7a43" : "#c81d25" }}>{note}</p>
+          </form>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <>
@@ -183,12 +235,9 @@ export default function Dashboard() {
             <ol className="steps">
               <li>@BotFather'a <b>/newbot</b> yaz, token'ı al.</li>
               <li>Kendi botuna <b>/start</b> gönder.</li>
-              <li>Yönetici şifresini, token'ı yaz, sohbeti bul, kaydet.</li>
+              <li>Token'ı yaz, sohbeti bul, kaydet.</li>
             </ol>
             <form onSubmit={save}>
-              <label>Yönetici şifresi
-                <input type="password" value={password} autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} />
-              </label>
               <label>Bot token
                 <input type="password" value={botToken} autoComplete="off" placeholder="123456:ABC..." onChange={(event) => setBotToken(event.target.value)} />
               </label>
@@ -215,7 +264,7 @@ export default function Dashboard() {
                 <button className="ghost" type="button" onClick={discover}>Sohbeti bul</button>
                 <button className="ghost" type="button" onClick={testMessage}>Deneme mesajı</button>
                 <button className="ghost" type="button" disabled={busy || !status?.ready} onClick={scan}>
-                  {busy ? "Taranıyor" : "Bir sayfa tara"}
+                  {busy ? "Sayfalar taranıyor" : "Sayfaları tara"}
                 </button>
               </div>
               <p className="hint" style={{ color: noteOk ? "#0e7a43" : "#c81d25" }}>{note}</p>

@@ -1,4 +1,4 @@
-import { scanOk } from "@/lib/auth";
+import { checkLogin, cronOk, scanOk } from "@/lib/auth";
 import { scanOnce } from "@/lib/scan";
 
 export const runtime = "nodejs";
@@ -6,7 +6,13 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 async function run(request: Request) {
-  if (!scanOk(request)) return Response.json({ error: "yetkisiz" }, { status: 401 });
+  if (!scanOk(request)) {
+    if (!cronOk(request)) {
+      const reason = checkLogin(request.headers.get("x-admin-user") || "", request.headers.get("x-admin-password") || "");
+      if (!reason.ok) return Response.json({ error: reason.error }, { status: 401 });
+    }
+    return Response.json({ error: "yetkisiz" }, { status: 401 });
+  }
   try {
     return Response.json(await scanOnce());
   } catch (error) {

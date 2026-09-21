@@ -20,6 +20,15 @@ body {
   font: 16px/1.45 "Segoe UI", sans-serif;
 }
 
+.gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.gate .panel { width: min(420px, 100%); }
+
 header, main, .log-panel, .stats, .banner {
   width: min(1120px, calc(100% - 32px));
   margin-left: auto;
