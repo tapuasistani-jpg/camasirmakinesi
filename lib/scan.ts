@@ -1,8 +1,7 @@
-import { DEPO_QUERIES, USER_AGENT, continueTarget, depoQueryLabel, depoSearchUrl, hasNextPage, isBlocked, pageSummary, parseSearchPage } from "@/lib/amazon";
+import { DEPO_QUERIES, USER_AGENT, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, pageSummary, parseSearchPage, seeAllResultsUrl } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
-  countProducts,
   dropPending,
   enqueuePending,
   getConfig,
@@ -174,13 +173,9 @@ const TIME_BUDGET_MS = 45_000;
 export async function scanOnce() {
   const config = await getConfig();
   const state = await readState();
-  const known = await countProducts();
   let page = state.page;
   let queryIndex = state.queryIndex % DEPO_QUERIES.length;
-  if (known === 0) {
-    page = 1;
-    queryIndex = 0;
-  }
+  let nextUrl = state.nextUrl;
   const started = Date.now();
   const seenAsins = new Set<string>();
   let seen = 0;
@@ -192,7 +187,7 @@ export async function scanOnce() {
   while (Date.now() - started < TIME_BUDGET_MS && pages < 10) {
     const query = DEPO_QUERIES[queryIndex] ?? "";
     label = depoQueryLabel(query);
-    const url = depoSearchUrl(query, page);
+    const url = nextUrl || depoSearchUrl(query, 1);
     let html = "";
     let detail = "";
     try {
@@ -202,24 +197,28 @@ export async function scanOnce() {
       cookies = loaded.cookies;
     } catch (error) {
       const message = error instanceof Error ? error.message : "sayfa açılmadı";
-      await addLog("hata", `Amazon Depo "${label}" sayfa ${page} açılmadı: ${message}`);
-      await writeState(page, queryIndex, "Amazon sayfası açılmadı");
+      await addLog("hata", `Amazon Depo "${label}" açılmadı: ${message}`);
+      await writeState(page, queryIndex, "Amazon sayfası açılmadı", nextUrl);
       return { ok: false, blocked: true, page, seen, pages, judged: 0, sent: 0 };
     }
     if (isBlocked(html)) {
       await addLog("hata", `Amazon robot sayfası verdi, liste sayılmadı. ${detail}`);
-      await writeState(page, queryIndex, "Amazon robot kontrolü gösterdi.");
+      await writeState(page, queryIndex, "Amazon robot kontrolü gösterdi.", nextUrl);
       return { ok: true, blocked: true, page, seen, pages, judged: 0, sent: 0 };
     }
     const items = parseSearchPage(html);
     const fresh = items.filter((item) => !seenAsins.has(item.asin));
     fresh.forEach((item) => seenAsins.add(item.asin));
-    const realEmpty = /sonuç bulunamadı|no results for|did not match/i.test(html);
-    const categoryDone = fresh.length === 0 || page >= PAGE_CAP || (realEmpty && items.length === 0) || (!hasNextPage(html) && items.length < 12);
-    if (!items.length && !realEmpty && pages === 0) {
-      await addLog("hata", `Sayfa geldi ama ürün okunamadı. ${detail}`);
-      await writeState(page, queryIndex, "Ürün kartları okunamadı.");
-      return { ok: true, blocked: true, page, seen, pages, judged: 0, sent: 0 };
+    const more = seeAllResultsUrl(html);
+    const sameLink = !more || more === url;
+    if (!items.length && sameLink) {
+      await addLog("uyari", `"${label}" ürün listesi değil, Tüm sonuçları gör de yok. ${detail} Sonraki kategoriye geçildi.`);
+      queryIndex = (queryIndex + 1) % DEPO_QUERIES.length;
+      page = 1;
+      nextUrl = null;
+      seenAsins.clear();
+      pages += 1;
+      continue;
     }
     for (const item of fresh) {
       const memory = await upsertProduct(item);
@@ -231,19 +230,22 @@ export async function scanOnce() {
       await enqueuePending(item, memory);
     }
     pages += 1;
-    await addLog("bilgi", `Amazon Depo "${label}" sayfa ${page}: ${fresh.length} ürün.${categoryDone ? " Bu arama bitti." : " Daha fazla var."}`);
-    if (!categoryDone) {
+    if (more && more !== url && page < PAGE_CAP) {
+      await addLog("bilgi", `Amazon Depo "${label}": ${fresh.length} ürün. Tüm sonuçları gör var, aşağı iniliyor.`);
+      nextUrl = more;
       page += 1;
       continue;
     }
+    await addLog("bilgi", `Amazon Depo "${label}": ${fresh.length} ürün. Tüm sonuçları gör kalmadı, sonraki kategori.`);
     queryIndex = (queryIndex + 1) % DEPO_QUERIES.length;
     page = 1;
+    nextUrl = null;
     seenAsins.clear();
   }
 
   const judged = await judgeOne();
   const sent = await sendOne();
-  await writeState(page, queryIndex, null);
-  await addLog("bilgi", `Tur bitti. "${label}" sayfa ${page}. Bu çağrıda ${pages} sayfa, ${seen} ürün.`);
+  await writeState(page, queryIndex, null, nextUrl);
+  await addLog("bilgi", `Tur bitti. "${label}". Bu çağrıda ${pages} sayfa, ${seen} ürün.`);
   return { ok: true, blocked: false, page, seen, pages, judged, sent };
 }

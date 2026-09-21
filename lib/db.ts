@@ -97,6 +97,7 @@ async function migrate(): Promise<void> {
   )`;
   await sql`INSERT INTO scan_state (id, page) VALUES (1, 1) ON CONFLICT (id) DO NOTHING`;
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS query_index INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS next_url TEXT`;
 }
 
 function num(value: unknown): number | null {
@@ -291,20 +292,22 @@ export async function countProducts(): Promise<number> {
   return num(rows[0]?.n) ?? 0;
 }
 
-export async function readState(): Promise<{ page: number; queryIndex: number; lastError: string | null; lastScanAt: string | null }> {
+export async function readState(): Promise<{ page: number; queryIndex: number; nextUrl: string | null; lastError: string | null; lastScanAt: string | null }> {
   await ensureSchema();
-  const rows = (await db()`SELECT page, query_index, last_error, last_scan_at FROM scan_state WHERE id = 1`) as Row[];
+  const rows = (await db()`SELECT page, query_index, next_url, last_error, last_scan_at FROM scan_state WHERE id = 1`) as Row[];
   const row = rows[0];
+  const nextUrl = row?.next_url ? String(row.next_url) : null;
   return {
     page: Math.max(1, num(row?.page) ?? 1),
     queryIndex: Math.max(0, num(row?.query_index) ?? 0),
+    nextUrl: nextUrl && nextUrl.startsWith("https://www.amazon.com.tr/") ? nextUrl : null,
     lastError: row?.last_error ? String(row.last_error) : null,
     lastScanAt: iso(row?.last_scan_at),
   };
 }
 
-export async function writeState(page: number, queryIndex: number, lastError: string | null): Promise<void> {
-  await db()`UPDATE scan_state SET page = ${page}, query_index = ${queryIndex}, last_error = ${lastError}, last_scan_at = NOW() WHERE id = 1`;
+export async function writeState(page: number, queryIndex: number, lastError: string | null, nextUrl: string | null = null): Promise<void> {
+  await db()`UPDATE scan_state SET page = ${page}, query_index = ${queryIndex}, next_url = ${nextUrl}, last_error = ${lastError}, last_scan_at = NOW() WHERE id = 1`;
 }
 
 function blankStatus(message: string): Status {

@@ -5,7 +5,6 @@ export const SEARCH_URL = "https://www.amazon.com.tr/s?k=&i=warehouse-deals&url=
 // Üstteki arama kutusunda "Amazon Depo" seçiliyken yazılan aramalar.
 // Boş arama listenin kendisi. Diğerleri aynı kutudan kategori araması.
 export const DEPO_QUERIES = [
-  "",
   "Bahçe",
   "Bebek",
   "Bilgisayar",
@@ -70,7 +69,7 @@ export function parsePrice(text: string | null | undefined): number | null {
 export function isBlocked(html: string): boolean {
   if (!html || html.length < 500) return true;
   const lowered = html.toLowerCase();
-  const needles = [
+  return [
     "validatecaptcha",
     "robot check",
     "type the characters you see",
@@ -78,18 +77,7 @@ export function isBlocked(html: string): boolean {
     "api-services-support@amazon.com",
     "captchacharacters",
     "opfcaptcha",
-    "automated access",
-    "otomatik erişim",
-    "sorry! something went wrong",
-    "üzgünüz",
-    "dogs of amazon",
-    "continue shopping",
-    "alışverişe devam",
-  ];
-  if (needles.some((needle) => lowered.includes(needle))) return true;
-  const cards = html.match(/data-asin="[A-Z0-9]{10}"/gi)?.length ?? 0;
-  const looksLikeResults = /s-search-result|s-result-item|data-component-type="s-search-result"/i.test(html);
-  return cards === 0 && !looksLikeResults;
+  ].some((needle) => lowered.includes(needle));
 }
 
 export function pageSummary(html: string): string {
@@ -99,28 +87,13 @@ export function pageSummary(html: string): string {
 }
 
 export function continueTarget(html: string): { url: string | null; captcha: boolean } {
-  if (/captchacharacters|validateCaptcha|opfcaptcha/i.test(html)) return { url: null, captcha: true };
+  if (!/captchacharacters|validateCaptcha|opfcaptcha/i.test(html)) return { url: null, captcha: false };
   const $ = cheerio.load(html);
-  const link = $("a")
-    .toArray()
-    .map((element) => $(element).attr("href") || "")
-    .find((href) => /cs_503|continue|alisveris/i.test(href));
-  const form = $("form[action]").first();
-  const action = form.attr("action") || "";
-  const raw = link || action;
-  if (!raw) return { url: null, captcha: false };
-  if (form.find("img[src*='captcha'], input[name='field-keywords']").length) return { url: null, captcha: true };
-  const base = raw.startsWith("http") ? raw : `https://www.amazon.com.tr${raw.startsWith("/") ? raw : `/${raw}`}`;
-  if (!base.startsWith("https://www.amazon.com.tr/")) return { url: null, captcha: false };
-  if (!form.length || link) return { url: base, captcha: false };
-  const params = new URLSearchParams();
-  form.find("input[name]").each((_, element) => {
-    const name = $(element).attr("name");
-    if (!name) return;
-    params.set(name, $(element).attr("value") || "");
-  });
-  const joiner = base.includes("?") ? "&" : "?";
-  return { url: params.size ? `${base}${joiner}${params.toString()}` : base, captcha: false };
+  const href = $("a[href*='cs_503'], a[href*='validateCaptcha']").attr("href") || "";
+  if (!href) return { url: null, captcha: true };
+  const url = href.startsWith("http") ? href : `https://www.amazon.com.tr${href.startsWith("/") ? href : `/${href}`}`;
+  if (!url.startsWith("https://www.amazon.com.tr/")) return { url: null, captcha: true };
+  return { url, captcha: false };
 }
 
 function clean(text: string): string {
@@ -140,6 +113,22 @@ function priceFromCard(card: { find(selector: string): { first(): { text(): stri
   const cents = frac.replace(/[^\d]/g, "") || "0";
   const value = Number(`${digits}.${cents}`);
   return Number.isFinite(value) ? value : null;
+}
+
+export function seeAllResultsUrl(html: string): string | null {
+  const $ = cheerio.load(html);
+  let found: string | null = null;
+  $("a[href]").each((_, element) => {
+    if (found) return;
+    const text = $(element).text().replace(/\s+/g, " ").trim();
+    if (text.length > 40 || !/tüm sonuçları gör/i.test(text)) return;
+    const href = $(element).attr("href") || "";
+    if (!href || href.startsWith("#") || /^javascript:/i.test(href)) return;
+    const url = href.startsWith("http") ? href : `https://www.amazon.com.tr${href.startsWith("/") ? href : `/${href}`}`;
+    if (!url.startsWith("https://www.amazon.com.tr/")) return;
+    found = url.split("#")[0];
+  });
+  return found;
 }
 
 export function hasNextPage(html: string): boolean {
@@ -222,7 +211,11 @@ export function assertAmazonParser(): void {
   if (looseItems.length !== 1 || looseItems[0].price !== 499.9) throw new Error("başlıksız kart okunamadı");
   const normal = `<html><title>Amazon Depo</title>${"x".repeat(600)}<div data-asin="B0TEST1234" data-component-type="s-search-result"></div></html>`;
   if (isBlocked(normal)) throw new Error("normal sayfa engel sayıldı");
-  if (!isBlocked(`<html>${"x".repeat(800)}<p>Üzgünüz</p></html>`)) throw new Error("robot sayfası kaçtı");
+  const splash = `<html><title>Amazon.com.tr: Amazon Depo</title>${"x".repeat(2000)}<p>Alışverişe devam</p></html>`;
+  if (isBlocked(splash)) throw new Error("kapak sayfası robot sayıldı");
+  const seeAll = seeAllResultsUrl(`<a href="/s?k=Kitap&i=warehouse-deals"><span>Tüm sonuçları gör</span></a>`);
+  if (seeAll !== "https://www.amazon.com.tr/s?k=Kitap&i=warehouse-deals") throw new Error("tüm sonuçları gör kaçtı");
+  if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
 }
