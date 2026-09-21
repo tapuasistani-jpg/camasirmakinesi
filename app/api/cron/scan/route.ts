@@ -13,8 +13,13 @@ async function run(request: Request) {
     }
     return Response.json({ error: "yetkisiz" }, { status: 401 });
   }
+  let category = "";
+  if (request.method === "POST") {
+    const body = await request.json().catch(() => ({})) as { category?: unknown };
+    if (typeof body.category === "string") category = body.category;
+  }
   try {
-    return Response.json(await scanOnce());
+    return Response.json(await scanOnce(category));
   } catch (error) {
     const message = error instanceof Error ? error.message : "tarama bozuldu";
     return Response.json({ ok: false, blocked: false, error: message });

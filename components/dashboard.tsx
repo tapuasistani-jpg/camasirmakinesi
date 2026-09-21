@@ -5,6 +5,27 @@ import type { Status } from "@/lib/types";
 
 const LABELS: Record<string, string> = { evet: "EVET", hayir: "HAYIR", kararsiz: "NET DEĞİL" };
 
+const CATEGORIES = [
+  "Bahçe",
+  "Bebek",
+  "Bilgisayar",
+  "Elektronik",
+  "Ev ve Yaşam",
+  "Evcil Hayvan Ürünleri",
+  "Kitap",
+  "Kişisel Bakım ve Kozmetik",
+  "Moda",
+  "Mutfak",
+  "Müzik Enstrümanları ve DJ",
+  "Ofis ve Kırtasiye",
+  "Otomotiv",
+  "Oyuncak",
+  "Sağlık ve Kişisel Bakım",
+  "Spor ve Outdoor",
+  "Video Oyunu ve Konsol",
+  "Yapı Market",
+];
+
 function tl(value: number | null | undefined): string {
   if (value == null) return "—";
   return new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 0 }).format(value);
@@ -36,6 +57,8 @@ export default function Dashboard() {
   const [note, setNote] = useState("");
   const [noteOk, setNoteOk] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [category, setCategory] = useState("Elektronik");
+  const [customCategory, setCustomCategory] = useState("");
   const filled = useRef(false);
 
   useEffect(() => {
@@ -127,17 +150,22 @@ export default function Dashboard() {
     say(response.ok ? "Deneme mesajı gitti." : data.error || "Gitmedi", response.ok);
   }
 
-  async function scan() {
+  async function scanCategory() {
+    const picked = customCategory.trim() || category;
     setBusy(true);
     sessionStorage.setItem("camasir-admin", password);
-    const response = await fetch("/api/cron/scan", { method: "POST", headers: headers() });
+    const response = await fetch("/api/cron/scan", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ category: picked }),
+    });
     const data = await response.json();
     setBusy(false);
     if (!response.ok) {
       say(data.error || "Tarama açılmadı", false);
       return;
     }
-    say(data.blocked ? "Amazon robot kontrolü gösterdi." : `Sayfa ${data.page}: ${data.seen} ürün.`, !data.blocked);
+    say(data.blocked ? "Amazon robot kontrolü gösterdi." : `"${picked}" arandı: ${data.seen} ürün.`, !data.blocked);
     await load();
   }
 
@@ -159,7 +187,7 @@ export default function Dashboard() {
     setAuthed(true);
   }
 
-  const fresh = status?.lastScanAt ? Date.now() - new Date(status.lastScanAt).getTime() < 30 * 60 * 1000 : false;
+  const fresh = status?.lastScanAt ? Date.now() - new Date(status.lastScanAt).getTime() < 15 * 60 * 1000 : false;
 
   if (!gateReady) return null;
 
@@ -192,11 +220,12 @@ export default function Dashboard() {
           <p className="brand">ÇAMAŞIRMAKİNESİ</p>
           <h1>Amazon Depo alarmı</h1>
           <p className="lede">
-            Amazon'a girince üstteki arama kutusunda Amazon Depo seçili kalır. Arama oradan yapılır,
-            sonuçlar sayfa sayfa gezilir. %80 ve üstü Google ile karşılaştırılır. Telegram'a yalnız net ucuz çıkanlar gider.
+            Makine kendi kendine gece gündüz Amazon Depo'yu tarar. Tarayıcıyı açık bırakmana gerek yok.
+            İstediğin kategoriyi sağdan seçip ayrıca da aratabilirsin. %80 ve üstü Google ile karşılaştırılır.
+            Telegram'a yalnız net ucuz çıkanlar gider.
           </p>
         </div>
-        <span className="pill">{fresh ? "az önce tarandı" : "sırada"}</span>
+        <span className="pill">{fresh ? "tarıyor" : "durdu"}</span>
       </header>
 
       {status && !status.ready ? <p className="banner">{status.message}</p> : null}
@@ -252,6 +281,14 @@ export default function Dashboard() {
                   </button>
                 ))}
               </div>
+              <label>Kategori
+                <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                  {CATEGORIES.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </label>
+              <label>Kendi kategorin
+                <input type="text" value={customCategory} placeholder="örnek: kulaklık" onChange={(event) => setCustomCategory(event.target.value)} />
+              </label>
               <label>İndirim eşiği %
                 <input type="number" min={40} max={95} value={minDiscount} onChange={(event) => setMinDiscount(Number(event.target.value))} />
               </label>
@@ -263,8 +300,8 @@ export default function Dashboard() {
                 <button type="submit">Kaydet</button>
                 <button className="ghost" type="button" onClick={discover}>Sohbeti bul</button>
                 <button className="ghost" type="button" onClick={testMessage}>Deneme mesajı</button>
-                <button className="ghost" type="button" disabled={busy || !status?.ready} onClick={scan}>
-                  {busy ? "Sayfalar taranıyor" : "Sayfaları tara"}
+                <button className="ghost" type="button" disabled={busy || !status?.ready} onClick={scanCategory}>
+                  {busy ? "Aranıyor" : "Bu kategoride ara"}
                 </button>
               </div>
               <p className="hint" style={{ color: noteOk ? "#0e7a43" : "#c81d25" }}>{note}</p>

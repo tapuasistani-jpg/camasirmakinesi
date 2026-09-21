@@ -1,6 +1,6 @@
 # ÇAMAŞIRMAKİNESİ
 
-Amazon Depo alarmı. Site Vercel'de açılır, kod GitHub'da durur. Tarama, amazon.com.tr arama kutusunda **Amazon Depo** seçiliyken yapılır. Önce kutu boş aranır, sonra Mutfak, Elektronik ve diğer depo kategorileri aynı kutudan aranır. GitHub Actions 15 dakikada bir 8 sayfa ilerletir.
+Amazon Depo alarmı. Site Vercel'de açılır, kod GitHub'da durur. Tarama, amazon.com.tr arama kutusunda **Amazon Depo** seçiliyken yapılır. GitHub Actions işi açık kaldığı sürece kategorileri durmadan gezer. Siteden seçilen kategori ayrıca aranır.
 
 %80 ve üstü indirimde ürün adı Google sonuçlarında aranır.
 
@@ -30,7 +30,7 @@ Repo → Settings → Secrets → Actions:
 - `SCAN_URL` = `https://senin-siten.vercel.app`
 - `CRON_SECRET` = Vercel'deki ile aynı
 
-`Depo tara` işi 15 dakikada bir çalışır. Actions sekmesinden elle de başlatılır.
+`Depo tara` işi saatlerce açık kalır ve bitince sıradaki tur başlar. Actions sekmesinden elle de başlatılır.
 
 ## Bilgisayarda bakmak
 

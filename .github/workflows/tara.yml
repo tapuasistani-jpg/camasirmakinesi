@@ -2,26 +2,45 @@ name: Depo tara
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "0 */4 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: depo-surekli
+  cancel-in-progress: false
 
 jobs:
   tara:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      actions: write
     steps:
-      - name: Aynı aramada sayfaları bitir
+      - name: Gece gündüz tara
         env:
           SCAN_URL: ${{ secrets.SCAN_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           if [ -z "$SCAN_URL" ] || [ -z "$CRON_SECRET" ]; then
             echo "GitHub secret eksik: SCAN_URL ve CRON_SECRET"
             exit 1
           fi
           base="${SCAN_URL%/}"
-          for i in $(seq 1 20); do
-            body=$(curl -fsS -m 58 -H "Authorization: Bearer $CRON_SECRET" "$base/api/cron/scan")
+          deadline=$((SECONDS + 200 * 60))
+          while [ $SECONDS -lt $deadline ]; do
+            body=$(curl -sS -m 58 -H "Authorization: Bearer $CRON_SECRET" "$base/api/cron/scan" || true)
             echo "$body"
-            echo "$body" | grep -q '"blocked":true' && exit 0
-            sleep 3
+            if echo "$body" | grep -q '"blocked":true'; then
+              echo "Amazon ara verdi, 2 dakika sonra devam."
+              sleep 120
+              continue
+            fi
+            sleep 5
           done
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/actions/workflows/tara.yml/dispatches" \
+            -d '{"ref":"main"}' || true
