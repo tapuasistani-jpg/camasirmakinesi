@@ -142,6 +142,17 @@ function priceFromCard(card: { find(selector: string): { first(): { text(): stri
   return Number.isFinite(value) ? value : null;
 }
 
+export function hasNextPage(html: string): boolean {
+  const $ = cheerio.load(html);
+  const next = $(".s-pagination-next, a[aria-label*='Sonraki'], a[aria-label*='Next']");
+  const enabled = next.toArray().some((element) => {
+    const node = $(element);
+    return !node.hasClass("s-pagination-disabled") && node.attr("aria-disabled") !== "true" && Boolean(node.attr("href") || node.text());
+  });
+  if (enabled) return true;
+  return /daha fazla sonuç/i.test($.text());
+}
+
 export function parseSearchPage(html: string): ProductCard[] {
   const $ = cheerio.load(html);
   const found: ProductCard[] = [];
@@ -212,4 +223,6 @@ export function assertAmazonParser(): void {
   const normal = `<html><title>Amazon Depo</title>${"x".repeat(600)}<div data-asin="B0TEST1234" data-component-type="s-search-result"></div></html>`;
   if (isBlocked(normal)) throw new Error("normal sayfa engel sayıldı");
   if (!isBlocked(`<html>${"x".repeat(800)}<p>Üzgünüz</p></html>`)) throw new Error("robot sayfası kaçtı");
+  if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
+  if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
 }

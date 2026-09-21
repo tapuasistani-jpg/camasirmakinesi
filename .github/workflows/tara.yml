@@ -9,7 +9,7 @@ jobs:
   tara:
     runs-on: ubuntu-latest
     steps:
-      - name: Sekiz sayfa ilerle
+      - name: Aynı aramada sayfaları bitir
         env:
           SCAN_URL: ${{ secrets.SCAN_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -19,8 +19,8 @@ jobs:
             exit 1
           fi
           base="${SCAN_URL%/}"
-          for i in 1 2 3 4 5 6 7 8; do
-            body=$(curl -fsS -m 55 -H "Authorization: Bearer $CRON_SECRET" "$base/api/cron/scan")
+          for i in $(seq 1 20); do
+            body=$(curl -fsS -m 58 -H "Authorization: Bearer $CRON_SECRET" "$base/api/cron/scan")
             echo "$body"
             echo "$body" | grep -q '"blocked":true' && exit 0
             sleep 3
