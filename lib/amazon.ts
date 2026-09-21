@@ -36,6 +36,16 @@ export function depoSearchUrl(query: string, page: number): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
+export function pageTurnUrl(query: string, page: number): string {
+  const url = new URL(depoSearchUrl(query, page));
+  if (page > 1) url.searchParams.set("ref", `sr_pg_${page}`);
+  return url.toString();
+}
+
+export function pageFlipUrl(html: string, currentUrl: string): string | null {
+  return explicitNext(html, currentUrl);
+}
+
 export function depoQueryLabel(query: string): string {
   return query ? query : "boş arama";
 }
@@ -355,6 +365,11 @@ export function assertAmazonParser(): void {
   const crowded = `${"<div data-asin=\"B0ELEC0001\"></div>".repeat(14)}<a href="/s?k=Elektronik&page=2"><span>Tüm sonuçları gör</span></a>`;
   const crowdedNext = continueResultsUrl(crowded, "https://www.amazon.com.tr/s?k=Elektronik&page=1");
   if (!crowdedNext?.includes("page=2")) throw new Error("14 ürünlü sayfada tüm sonuçları gör atlandı");
+  const flip = pageFlipUrl(
+    `<a href="/s?k=Elektronik">Tüm sonuçları gör</a><a aria-label="2. sayfaya git" href="/s?k=Elektronik&page=2&ref=sr_pg_2">2</a>`,
+    "https://www.amazon.com.tr/s?k=Elektronik&page=1",
+  );
+  if (!flip?.includes("sr_pg_2")) throw new Error("elektronik sayfa çevirme kaçtı");
   const bumped = nextSearchPage("https://www.amazon.com.tr/s?k=Elektronik&i=warehouse-deals&page=1");
   if (!bumped?.includes("page=2")) throw new Error("sayfa artırılamadı");
   const plain = `
