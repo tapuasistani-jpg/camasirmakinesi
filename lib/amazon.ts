@@ -194,17 +194,18 @@ function explicitNext(html: string, currentUrl: string): string | null {
   } catch {
     current = 1;
   }
-  let best: { n: number; url: string } | null = null;
+  const best = { n: Number.POSITIVE_INFINITY, url: "" };
   $("a[href]").each((_, element) => {
     const label = `${$(element).attr("aria-label") || ""} ${$(element).text()}`.replace(/\s+/g, " ");
     const match = label.match(/(\d+)\s*\.?\s*sayfa/i);
     const n = match ? Number(match[1]) : NaN;
     if (!Number.isFinite(n) || n <= current) return;
     const url = amazonUrl($(element).attr("href") || "");
-    if (!url) return;
-    if (!best || n < best.n) best = { n, url };
+    if (!url || n >= best.n) return;
+    best.n = n;
+    best.url = url;
   });
-  if (best) return best.url;
+  if (best.url) return best.url;
   const raw = html.match(/href="([^"]+)"[^>]*(?:s-pagination-next|rel="next")|s-pagination-next[^>]*href="([^"]+)"|rel="next"[^>]*href="([^"]+)"/i);
   const rawHref = raw?.[1] || raw?.[2] || raw?.[3] || "";
   const fromRaw = amazonUrl(rawHref);
