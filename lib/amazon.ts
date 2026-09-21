@@ -166,6 +166,7 @@ export function nextSearchPage(currentUrl: string): string | null {
   const current = Number(url.searchParams.get("page") || "1");
   if (!Number.isFinite(current) || current < 1 || current >= 200) return null;
   url.searchParams.set("page", String(current + 1));
+  url.searchParams.set("ref", `sr_pg_${current + 1}`);
   const next = url.toString();
   return next === currentUrl ? null : next;
 }
@@ -242,8 +243,6 @@ function explicitNext(html: string, currentUrl: string): string | null {
 export function continueResultsUrl(html: string, currentUrl: string): string | null {
   const next = explicitNext(html, currentUrl);
   if (next) return next;
-  const cards = html.match(/data-asin="[A-Z0-9]{10}"/gi)?.length ?? 0;
-  if (cards >= 12) return null;
   const seeAll = seeAllResultsUrl(html);
   if (seeAll && seeAll !== currentUrl) return seeAll;
   return null;
@@ -353,6 +352,9 @@ export function assertAmazonParser(): void {
     "https://www.amazon.com.tr/s?k=Elektronik&i=warehouse-deals&page=1",
   );
   if (!numbered?.includes("page=2")) throw new Error("sayfa numarası kaçtı");
+  const crowded = `${"<div data-asin=\"B0ELEC0001\"></div>".repeat(14)}<a href="/s?k=Elektronik&page=2"><span>Tüm sonuçları gör</span></a>`;
+  const crowdedNext = continueResultsUrl(crowded, "https://www.amazon.com.tr/s?k=Elektronik&page=1");
+  if (!crowdedNext?.includes("page=2")) throw new Error("14 ürünlü sayfada tüm sonuçları gör atlandı");
   const bumped = nextSearchPage("https://www.amazon.com.tr/s?k=Elektronik&i=warehouse-deals&page=1");
   if (!bumped?.includes("page=2")) throw new Error("sayfa artırılamadı");
   const plain = `

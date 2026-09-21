@@ -1,4 +1,4 @@
-import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, nextSearchPage, pageSummary, parseSearchPage } from "@/lib/amazon";
+import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, nextSearchPage, pageSummary, parseSearchPage, seeAllResultsUrl } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
@@ -186,6 +186,7 @@ export async function scanOnce(onlyRaw?: string) {
   let pinned = manual || state.queryText;
   const started = Date.now();
   const seenAsins = new Set<string>();
+  const seenUrls = new Set<string>();
   let seen = 0;
   let pages = 0;
   let label = depoQueryLabel(DEPO_QUERIES[queryIndex] ?? "");
@@ -217,7 +218,16 @@ export async function scanOnce(onlyRaw?: string) {
     const items = parseSearchPage(html);
     const fresh = items.filter((item) => !seenAsins.has(item.asin));
     fresh.forEach((item) => seenAsins.add(item.asin));
+    seenUrls.add(url);
     let more = continueResultsUrl(html, url);
+    const seeAll = seeAllResultsUrl(html);
+    if (items.length > 0 && fresh.length === 0 && seeAll && seeAll !== url && !seenUrls.has(seeAll)) {
+      await addLog("bilgi", `Amazon Depo "${label}" sayfa ${page}: aynı ürünler geldi. Tüm sonuçları gör var, listeye giriliyor.`);
+      nextUrl = seeAll;
+      page += 1;
+      pages += 1;
+      continue;
+    }
     if (!more && items.length > 0 && fresh.length > 0) more = nextSearchPage(url);
     if (items.length > 0 && fresh.length === 0) {
       await addLog("bilgi", `Amazon Depo "${label}" sayfa ${page}: yeni ürün kalmadı. Bu kategori bitti, sonraki kategori.`);
@@ -226,6 +236,7 @@ export async function scanOnce(onlyRaw?: string) {
       page = 1;
       nextUrl = null;
       seenAsins.clear();
+      seenUrls.clear();
       pages += 1;
       continue;
     }
@@ -236,6 +247,7 @@ export async function scanOnce(onlyRaw?: string) {
       page = 1;
       nextUrl = null;
       seenAsins.clear();
+      seenUrls.clear();
       pages += 1;
       continue;
     }
@@ -261,6 +273,7 @@ export async function scanOnce(onlyRaw?: string) {
     page = 1;
     nextUrl = null;
     seenAsins.clear();
+    seenUrls.clear();
   }
 
   const judged = await judgeOne();
