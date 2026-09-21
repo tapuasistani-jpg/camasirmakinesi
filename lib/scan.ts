@@ -1,4 +1,4 @@
-import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, pageSummary, parseSearchPage } from "@/lib/amazon";
+import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, nextSearchPage, pageSummary, parseSearchPage } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
@@ -217,7 +217,18 @@ export async function scanOnce(onlyRaw?: string) {
     const items = parseSearchPage(html);
     const fresh = items.filter((item) => !seenAsins.has(item.asin));
     fresh.forEach((item) => seenAsins.add(item.asin));
-    const more = continueResultsUrl(html, url);
+    let more = continueResultsUrl(html, url);
+    if (!more && items.length > 0 && fresh.length > 0) more = nextSearchPage(url);
+    if (items.length > 0 && fresh.length === 0) {
+      await addLog("bilgi", `Amazon Depo "${label}" sayfa ${page}: yeni ürün kalmadı. Bu kategori bitti, sonraki kategori.`);
+      if (pinned) pinned = null;
+      else queryIndex = (queryIndex + 1) % DEPO_QUERIES.length;
+      page = 1;
+      nextUrl = null;
+      seenAsins.clear();
+      pages += 1;
+      continue;
+    }
     if (!items.length && !more) {
       await addLog("uyari", `"${label}" ürün listesi değil ve sonraki sayfa yok. ${detail} Sonraki kategoriye geçildi.`);
       if (pinned) pinned = null;

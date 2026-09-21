@@ -117,10 +117,30 @@ function priceFromCard(card: { find(selector: string): { first(): { text(): stri
 }
 
 function amazonUrl(href: string): string | null {
-  if (!href || href.startsWith("#") || /^javascript:/i.test(href)) return null;
-  const url = href.startsWith("http") ? href : `https://www.amazon.com.tr${href.startsWith("/") ? href : `/${href}`}`;
-  if (!url.startsWith("https://www.amazon.com.tr/")) return null;
-  return url.split("#")[0];
+  const raw = href.replace(/&amp;/g, "&").trim();
+  if (!raw || raw.startsWith("#") || /^javascript:/i.test(raw)) return null;
+  const absolute = raw.startsWith("//")
+    ? `https:${raw}`
+    : raw.startsWith("http")
+      ? raw
+      : `https://www.amazon.com.tr${raw.startsWith("/") ? raw : `/${raw}`}`;
+  if (!absolute.startsWith("https://www.amazon.com.tr/")) return null;
+  return absolute.split("#")[0];
+}
+
+export function nextSearchPage(currentUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(currentUrl);
+  } catch {
+    return null;
+  }
+  if (!url.hostname.endsWith("amazon.com.tr") || !url.pathname.startsWith("/s")) return null;
+  const current = Number(url.searchParams.get("page") || "1");
+  if (!Number.isFinite(current) || current < 1 || current >= 200) return null;
+  url.searchParams.set("page", String(current + 1));
+  const next = url.toString();
+  return next === currentUrl ? null : next;
 }
 
 function looseTl(card: { clone(): { find(selector: string): { remove(): void }; text(): string } }): number | null {
@@ -150,26 +170,54 @@ export function seeAllResultsUrl(html: string): string | null {
   return raw ? amazonUrl(raw[1].replace(/&amp;/g, "&")) : null;
 }
 
+function explicitNext(html: string, currentUrl: string): string | null {
+  const $ = cheerio.load(html);
+  let found: string | null = null;
+  const take = (href: string | undefined) => {
+    if (found) return;
+    const url = amazonUrl(href || "");
+    if (url && url !== currentUrl) found = url;
+  };
+  $("link[rel='next']").each((_, element) => take($(element).attr("href")));
+  $("a[href]").each((_, element) => {
+    const node = $(element);
+    if (node.hasClass("s-pagination-disabled") || node.attr("aria-disabled") === "true") return;
+    const label = `${node.attr("aria-label") || ""} ${node.text()}`.replace(/\s+/g, " ").trim();
+    if (node.hasClass("s-pagination-next") || /sonraki|next page|daha fazla sonuç/i.test(label)) {
+      take(node.attr("href"));
+    }
+  });
+  if (found) return found;
+  let current = 1;
+  try {
+    current = Number(new URL(currentUrl).searchParams.get("page") || "1");
+  } catch {
+    current = 1;
+  }
+  let best: { n: number; url: string } | null = null;
+  $("a[href]").each((_, element) => {
+    const label = `${$(element).attr("aria-label") || ""} ${$(element).text()}`.replace(/\s+/g, " ");
+    const match = label.match(/(\d+)\s*\.?\s*sayfa/i);
+    const n = match ? Number(match[1]) : NaN;
+    if (!Number.isFinite(n) || n <= current) return;
+    const url = amazonUrl($(element).attr("href") || "");
+    if (!url) return;
+    if (!best || n < best.n) best = { n, url };
+  });
+  if (best) return best.url;
+  const raw = html.match(/href="([^"]+)"[^>]*(?:s-pagination-next|rel="next")|s-pagination-next[^>]*href="([^"]+)"|rel="next"[^>]*href="([^"]+)"/i);
+  const rawHref = raw?.[1] || raw?.[2] || raw?.[3] || "";
+  const fromRaw = amazonUrl(rawHref);
+  return fromRaw && fromRaw !== currentUrl ? fromRaw : null;
+}
+
 export function continueResultsUrl(html: string, currentUrl: string): string | null {
+  const next = explicitNext(html, currentUrl);
+  if (next) return next;
+  const cards = html.match(/data-asin="[A-Z0-9]{10}"/gi)?.length ?? 0;
+  if (cards >= 12) return null;
   const seeAll = seeAllResultsUrl(html);
   if (seeAll && seeAll !== currentUrl) return seeAll;
-  const $ = cheerio.load(html);
-  const href = $(
-    "a.s-pagination-next[href], a[aria-label*='Sonraki'][href], a[aria-label*='Next'][href]",
-  ).filter((_, element) => {
-    const node = $(element);
-    return !node.hasClass("s-pagination-disabled") && node.attr("aria-disabled") !== "true";
-  }).first().attr("href") || "";
-  const next = amazonUrl(href);
-  if (next && next !== currentUrl) return next;
-  let word = "";
-  $("a[href]").each((_, element) => {
-    if (word) return;
-    const text = $(element).text().replace(/\s+/g, " ").trim();
-    if (/^(sonraki|next|daha fazla sonuç)$/i.test(text)) word = $(element).attr("href") || "";
-  });
-  const byWord = amazonUrl(word);
-  if (byWord && byWord !== currentUrl) return byWord;
   return null;
 }
 
@@ -262,6 +310,13 @@ export function assertAmazonParser(): void {
     "https://www.amazon.com.tr/s?k=Bebek&page=1",
   );
   if (next !== "https://www.amazon.com.tr/s?k=Bebek&page=2") throw new Error("sonraki sayfa linki kaçtı");
+  const numbered = continueResultsUrl(
+    `<a aria-label="2. sayfaya git" href="/s?k=Elektronik&amp;i=warehouse-deals&amp;page=2">2</a>`,
+    "https://www.amazon.com.tr/s?k=Elektronik&i=warehouse-deals&page=1",
+  );
+  if (!numbered?.includes("page=2")) throw new Error("sayfa numarası kaçtı");
+  const bumped = nextSearchPage("https://www.amazon.com.tr/s?k=Elektronik&i=warehouse-deals&page=1");
+  if (!bumped?.includes("page=2")) throw new Error("sayfa artırılamadı");
   const plain = `
     <div data-asin="B0TEST9012"><img alt="Bebek Bezi"><span>249,90 TL</span></div>
   `;
