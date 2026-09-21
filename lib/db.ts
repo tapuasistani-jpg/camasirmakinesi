@@ -197,7 +197,8 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
   const previous = num(row.last_price) ?? item.price;
   const highest = Math.max(num(row.highest_price) ?? item.price, item.price);
   const lowest = Math.min(num(row.lowest_price) ?? item.price, item.price);
-  const listPrice = item.listPrice ?? num(row.list_price);
+  const storedList = num(row.list_price);
+  const listPrice = item.listPrice ?? (storedList != null && item.price > 0 && (Math.abs(storedList / item.price - 100) < 3 || Math.abs(storedList / item.price - 1000) < 30) ? null : storedList);
   const inserted = Math.abs(previous - item.price) > 0.009;
   await sql`UPDATE products SET
     title = ${item.title},
@@ -341,11 +342,25 @@ function blankStatus(message: string): Status {
   };
 }
 
+async function dropFakeUnitDeals(): Promise<void> {
+  const sql = db();
+  await sql`DELETE FROM alerts
+    WHERE price > 0 AND list_price > price
+      AND (abs(list_price / price - 100) < 3 OR abs(list_price / price - 1000) < 30)`;
+  await sql`DELETE FROM pending
+    WHERE price > 0 AND list_price > price
+      AND (abs(list_price / price - 100) < 3 OR abs(list_price / price - 1000) < 30)`;
+  await sql`UPDATE products SET list_price = NULL
+    WHERE last_price > 0 AND list_price > last_price
+      AND (abs(list_price / last_price - 100) < 3 OR abs(list_price / last_price - 1000) < 30)`;
+}
+
 export async function getStatus(): Promise<Status> {
   if (!databaseUrl()) {
     return blankStatus("Postgres bağlı değil. Vercel'de Storage → Create Database → Postgres.");
   }
   await ensureSchema();
+  await dropFakeUnitDeals();
   const sql = db();
   const config = await getConfig();
   const state = await readState();
