@@ -1,4 +1,4 @@
-import { DEPO_QUERIES, USER_AGENT, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, pageSummary, parseSearchPage, seeAllResultsUrl } from "@/lib/amazon";
+import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, pageSummary, parseSearchPage } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
@@ -167,7 +167,7 @@ async function sendOne(): Promise<number> {
   return 1;
 }
 
-const PAGE_CAP = 40;
+const PAGE_CAP = 200;
 const TIME_BUDGET_MS = 45_000;
 
 function manualQuery(raw: string | undefined): string {
@@ -183,6 +183,7 @@ export async function scanOnce(onlyRaw?: string) {
   let page = manual ? 1 : state.page;
   let queryIndex = state.queryIndex % DEPO_QUERIES.length;
   let nextUrl = manual ? null : state.nextUrl;
+  let pinned = manual || state.queryText;
   const started = Date.now();
   const seenAsins = new Set<string>();
   let seen = 0;
@@ -192,7 +193,7 @@ export async function scanOnce(onlyRaw?: string) {
   let cookies = home.cookies;
 
   while (Date.now() - started < TIME_BUDGET_MS && pages < 10) {
-    const query = manual || (DEPO_QUERIES[queryIndex] ?? "");
+    const query = pinned || (DEPO_QUERIES[queryIndex] ?? "");
     label = depoQueryLabel(query);
     const url = nextUrl || depoSearchUrl(query, 1);
     let html = "";
@@ -205,26 +206,22 @@ export async function scanOnce(onlyRaw?: string) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "sayfa açılmadı";
       await addLog("hata", `Amazon Depo "${label}" açılmadı: ${message}`);
-      if (!manual) await writeState(page, queryIndex, "Amazon sayfası açılmadı", nextUrl);
+      await writeState(page, queryIndex, "Amazon sayfası açılmadı", nextUrl, pinned);
       return { ok: false, blocked: true, page, seen, pages, judged: 0, sent: 0 };
     }
     if (isBlocked(html)) {
       await addLog("hata", `Amazon robot sayfası verdi, liste sayılmadı. ${detail}`);
-      if (!manual) await writeState(page, queryIndex, "Amazon robot kontrolü gösterdi.", nextUrl);
+      await writeState(page, queryIndex, "Amazon robot kontrolü gösterdi.", nextUrl, pinned);
       return { ok: true, blocked: true, page, seen, pages, judged: 0, sent: 0 };
     }
     const items = parseSearchPage(html);
     const fresh = items.filter((item) => !seenAsins.has(item.asin));
     fresh.forEach((item) => seenAsins.add(item.asin));
-    const more = seeAllResultsUrl(html);
-    const sameLink = !more || more === url;
-    if (!items.length && sameLink) {
-      if (manual) {
-        await addLog("uyari", `Elle arama "${label}" ürün listesi değil. ${detail}`);
-        break;
-      }
-      await addLog("uyari", `"${label}" ürün listesi değil, Tüm sonuçları gör de yok. ${detail} Sonraki kategoriye geçildi.`);
-      queryIndex = (queryIndex + 1) % DEPO_QUERIES.length;
+    const more = continueResultsUrl(html, url);
+    if (!items.length && !more) {
+      await addLog("uyari", `"${label}" ürün listesi değil ve sonraki sayfa yok. ${detail} Sonraki kategoriye geçildi.`);
+      if (pinned) pinned = null;
+      else queryIndex = (queryIndex + 1) % DEPO_QUERIES.length;
       page = 1;
       nextUrl = null;
       seenAsins.clear();
@@ -241,18 +238,15 @@ export async function scanOnce(onlyRaw?: string) {
       await enqueuePending(item, memory);
     }
     pages += 1;
-    if (more && more !== url && page < PAGE_CAP) {
-      await addLog("bilgi", `${manual ? "Elle arama" : "Amazon Depo"} "${label}": ${fresh.length} ürün. Tüm sonuçları gör var, aşağı iniliyor.`);
+    if (more && page < PAGE_CAP) {
+      await addLog("bilgi", `Amazon Depo "${label}" sayfa ${page}: ${fresh.length} ürün. Sonraki sayfa var, iniliyor.`);
       nextUrl = more;
       page += 1;
       continue;
     }
-    if (manual) {
-      await addLog("bilgi", `Elle arama "${label}": ${fresh.length} ürün. Tüm sonuçları gör kalmadı.`);
-      break;
-    }
-    await addLog("bilgi", `Amazon Depo "${label}": ${fresh.length} ürün. Tüm sonuçları gör kalmadı, sonraki kategori.`);
-    queryIndex = (queryIndex + 1) % DEPO_QUERIES.length;
+    await addLog("bilgi", `Amazon Depo "${label}" sayfa ${page}: ${fresh.length} ürün. Bu kategori bitti, sonraki kategori.`);
+    if (pinned) pinned = null;
+    else queryIndex = (queryIndex + 1) % DEPO_QUERIES.length;
     page = 1;
     nextUrl = null;
     seenAsins.clear();
@@ -260,8 +254,7 @@ export async function scanOnce(onlyRaw?: string) {
 
   const judged = await judgeOne();
   const sent = await sendOne();
-  if (manual) await writeState(state.page, state.queryIndex, null, state.nextUrl);
-  else await writeState(page, queryIndex, null, nextUrl);
-  await addLog("bilgi", `${manual ? `Elle arama "${manual}" bitti.` : "Tur bitti."} Bu çağrıda ${pages} sayfa, ${seen} ürün.`);
+  await writeState(page, queryIndex, null, nextUrl, pinned);
+  await addLog("bilgi", `Tur bitti. "${label}" sayfa ${page}. Bu çağrıda ${pages} sayfa, ${seen} ürün. Kategori bitene kadar devam eder.`);
   return { ok: true, blocked: false, page, seen, pages, judged, sent };
 }

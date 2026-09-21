@@ -7,6 +7,7 @@ export const SEARCH_URL = "https://www.amazon.com.tr/s?k=&i=warehouse-deals&url=
 export const DEPO_QUERIES = [
   "Bahçe",
   "Bebek",
+  "Bebek Bakım",
   "Bilgisayar",
   "Elektronik",
   "Ev ve Yaşam",
@@ -115,20 +116,61 @@ function priceFromCard(card: { find(selector: string): { first(): { text(): stri
   return Number.isFinite(value) ? value : null;
 }
 
+function amazonUrl(href: string): string | null {
+  if (!href || href.startsWith("#") || /^javascript:/i.test(href)) return null;
+  const url = href.startsWith("http") ? href : `https://www.amazon.com.tr${href.startsWith("/") ? href : `/${href}`}`;
+  if (!url.startsWith("https://www.amazon.com.tr/")) return null;
+  return url.split("#")[0];
+}
+
+function looseTl(card: { clone(): { find(selector: string): { remove(): void }; text(): string } }): number | null {
+  const copy = card.clone();
+  copy.find(".a-text-price").remove();
+  const match = copy.text().replace(/\u00a0/g, " ").match(/(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})\s*TL/i);
+  if (!match) return null;
+  return parsePrice(`${match[1]},${match[2]} TL`);
+}
+
+const SEE_ALL = /tüm sonuçları gör|tümünü gör|sonuçların tümünü|see all results/i;
+
 export function seeAllResultsUrl(html: string): string | null {
   const $ = cheerio.load(html);
   let found: string | null = null;
-  $("a[href]").each((_, element) => {
+  $("a[href], span, button").each((_, element) => {
     if (found) return;
-    const text = $(element).text().replace(/\s+/g, " ").trim();
-    if (text.length > 40 || !/tüm sonuçları gör/i.test(text)) return;
-    const href = $(element).attr("href") || "";
-    if (!href || href.startsWith("#") || /^javascript:/i.test(href)) return;
-    const url = href.startsWith("http") ? href : `https://www.amazon.com.tr${href.startsWith("/") ? href : `/${href}`}`;
-    if (!url.startsWith("https://www.amazon.com.tr/")) return;
-    found = url.split("#")[0];
+    const node = $(element);
+    const text = node.text().replace(/\s+/g, " ").trim();
+    if (!text || text.length > 60 || !SEE_ALL.test(text)) return;
+    const link = node.is("a[href]") ? node : node.closest("a[href]");
+    const href = link.attr("href") || node.closest("form[action]").attr("action") || "";
+    found = amazonUrl(href);
   });
-  return found;
+  if (found) return found;
+  const raw = html.match(/href="([^"]+)"[^>]*>\s*(?:<[^>]+>\s*){0,4}Tüm sonuçları gör/i);
+  return raw ? amazonUrl(raw[1].replace(/&amp;/g, "&")) : null;
+}
+
+export function continueResultsUrl(html: string, currentUrl: string): string | null {
+  const seeAll = seeAllResultsUrl(html);
+  if (seeAll && seeAll !== currentUrl) return seeAll;
+  const $ = cheerio.load(html);
+  const href = $(
+    "a.s-pagination-next[href], a[aria-label*='Sonraki'][href], a[aria-label*='Next'][href]",
+  ).filter((_, element) => {
+    const node = $(element);
+    return !node.hasClass("s-pagination-disabled") && node.attr("aria-disabled") !== "true";
+  }).first().attr("href") || "";
+  const next = amazonUrl(href);
+  if (next && next !== currentUrl) return next;
+  let word = "";
+  $("a[href]").each((_, element) => {
+    if (word) return;
+    const text = $(element).text().replace(/\s+/g, " ").trim();
+    if (/^(sonraki|next|daha fazla sonuç)$/i.test(text)) word = $(element).attr("href") || "";
+  });
+  const byWord = amazonUrl(word);
+  if (byWord && byWord !== currentUrl) return byWord;
+  return null;
 }
 
 export function hasNextPage(html: string): boolean {
@@ -158,7 +200,7 @@ export function parseSearchPage(html: string): ProductCard[] {
       || "",
     );
     if (title.length < 3) return;
-    const price = priceFromCard(card, false);
+    const price = priceFromCard(card, false) ?? looseTl(card);
     if (price == null) return;
     let listPrice = priceFromCard(card, true);
     if (listPrice != null && listPrice <= price) listPrice = null;
@@ -215,6 +257,16 @@ export function assertAmazonParser(): void {
   if (isBlocked(splash)) throw new Error("kapak sayfası robot sayıldı");
   const seeAll = seeAllResultsUrl(`<a href="/s?k=Kitap&i=warehouse-deals"><span>Tüm sonuçları gör</span></a>`);
   if (seeAll !== "https://www.amazon.com.tr/s?k=Kitap&i=warehouse-deals") throw new Error("tüm sonuçları gör kaçtı");
+  const next = continueResultsUrl(
+    `<a class="s-pagination-next" href="/s?k=Bebek&page=2">Sonraki</a>`,
+    "https://www.amazon.com.tr/s?k=Bebek&page=1",
+  );
+  if (next !== "https://www.amazon.com.tr/s?k=Bebek&page=2") throw new Error("sonraki sayfa linki kaçtı");
+  const plain = `
+    <div data-asin="B0TEST9012"><img alt="Bebek Bezi"><span>249,90 TL</span></div>
+  `;
+  const plainItems = parseSearchPage(plain);
+  if (plainItems.length !== 1 || plainItems[0].price !== 249.9) throw new Error("düz fiyat okunamadı");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");

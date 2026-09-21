@@ -8,6 +8,7 @@ const LABELS: Record<string, string> = { evet: "EVET", hayir: "HAYIR", kararsiz:
 const CATEGORIES = [
   "Bahçe",
   "Bebek",
+  "Bebek Bakım",
   "Bilgisayar",
   "Elektronik",
   "Ev ve Yaşam",
