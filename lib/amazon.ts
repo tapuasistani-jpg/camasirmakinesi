@@ -112,6 +112,22 @@ function perUnitMultiple(price: number, listPrice: number): boolean {
   return Math.abs(ratio - 100) / 100 < 0.03 || Math.abs(ratio - 1000) / 1000 < 0.03;
 }
 
+export function fakeListPrice(title: string, price: number, listPrice: number | null): boolean {
+  if (listPrice == null || !(listPrice > price) || price <= 0) return false;
+  if (perUnitMultiple(price, listPrice)) return true;
+  const match = title.match(/(\d+(?:[.,]\d+)?)\s*(ml|cl|lt|l|kg|g|gr)\b/i);
+  if (!match) return false;
+  const qty = Number(match[1].replace(/\./g, "").replace(",", "."));
+  if (!Number.isFinite(qty) || qty <= 0) return false;
+  const unit = match[2].toLowerCase();
+  const factors = unit === "ml" || unit === "g" || unit === "gr"
+    ? [100 / qty, 1000 / qty]
+    : unit === "cl"
+      ? [10 / qty, 100 / qty]
+      : [1 / qty, 100 / qty];
+  return factors.some((factor) => factor > 1.5 && Math.abs(price * factor - listPrice) / listPrice < 0.04);
+}
+
 function priceFromCard(card: { find(selector: string): { first(): { text(): string } } }, strike: boolean): number | null {
   const selector = strike
     ? "span.a-price.a-text-price span.a-offscreen"
@@ -270,7 +286,7 @@ export function parseSearchPage(html: string): ProductCard[] {
       const around = clean(`${node.text()} ${node.next().text()} ${node.parent().text().slice(0, 220)}`);
       const value = parsePrice(node.find("span.a-offscreen").first().text());
       if (value == null || value <= price) return;
-      if (isUnitPrice(around)) return;
+      if (isUnitPrice(around) || fakeListPrice(title, price, value)) return;
       if (isUnitPrice(cardText) && perUnitMultiple(price, value)) return;
       listPrice = value;
     });
@@ -365,6 +381,16 @@ export function assertAmazonParser(): void {
   `;
   const realItems = parseSearchPage(realSale);
   if (realItems.length !== 1 || realItems[0].listPrice !== 1000) throw new Error("gerçek indirim silindi");
+  const nail = `
+    <div data-asin="B0NAILPOL15">
+      <h2><span>Mara Kozmetik Oje 15ml</span></h2>
+      <span class="a-price"><span class="a-offscreen">200,00 TL</span></span>
+      <span class="a-price a-text-price"><span class="a-offscreen">1.333,00 TL</span></span>
+    </div>
+  `;
+  const nailItems = parseSearchPage(nail);
+  if (nailItems.length !== 1 || nailItems[0].listPrice !== null) throw new Error("15 ml birim fiyatı indirim sanıldı");
+  if (!fakeListPrice("Bosch Disk 350 Mm", 3669, 366900)) throw new Error("100 kat fiyat kaçtı");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");

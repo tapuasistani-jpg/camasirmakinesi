@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 
-import { DEPO_QUERIES, SEARCH_URL, depoQueryLabel } from "@/lib/amazon";
+import { DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
@@ -198,7 +198,9 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
   const highest = Math.max(num(row.highest_price) ?? item.price, item.price);
   const lowest = Math.min(num(row.lowest_price) ?? item.price, item.price);
   const storedList = num(row.list_price);
-  const listPrice = item.listPrice ?? (storedList != null && item.price > 0 && (Math.abs(storedList / item.price - 100) < 3 || Math.abs(storedList / item.price - 1000) < 30) ? null : storedList);
+  const incoming = item.listPrice != null && fakeListPrice(item.title, item.price, item.listPrice) ? null : item.listPrice;
+  const keptStored = storedList != null && !fakeListPrice(item.title, item.price, storedList) ? storedList : null;
+  const listPrice = incoming ?? keptStored;
   const inserted = Math.abs(previous - item.price) > 0.009;
   await sql`UPDATE products SET
     title = ${item.title},
@@ -344,15 +346,21 @@ function blankStatus(message: string): Status {
 
 async function dropFakeUnitDeals(): Promise<void> {
   const sql = db();
-  await sql`DELETE FROM alerts
-    WHERE price > 0 AND list_price > price
-      AND (abs(list_price / price - 100) < 3 OR abs(list_price / price - 1000) < 30)`;
-  await sql`DELETE FROM pending
-    WHERE price > 0 AND list_price > price
-      AND (abs(list_price / price - 100) < 3 OR abs(list_price / price - 1000) < 30)`;
-  await sql`UPDATE products SET list_price = NULL
-    WHERE last_price > 0 AND list_price > last_price
-      AND (abs(list_price / last_price - 100) < 3 OR abs(list_price / last_price - 1000) < 30)`;
+  const alerts = (await sql`SELECT id, title, price, list_price FROM alerts WHERE price > 0 AND list_price > price * 4`) as Row[];
+  for (const row of alerts) {
+    if (!fakeListPrice(String(row.title ?? ""), Number(row.price), num(row.list_price))) continue;
+    await sql`DELETE FROM alerts WHERE id = ${row.id}`;
+  }
+  const waiting = (await sql`SELECT asin, title, price, list_price FROM pending WHERE price > 0 AND list_price > price * 4`) as Row[];
+  for (const row of waiting) {
+    if (!fakeListPrice(String(row.title ?? ""), Number(row.price), num(row.list_price))) continue;
+    await sql`DELETE FROM pending WHERE asin = ${String(row.asin)}`;
+  }
+  const goods = (await sql`SELECT asin, title, last_price, list_price FROM products WHERE last_price > 0 AND list_price > last_price * 4`) as Row[];
+  for (const row of goods) {
+    if (!fakeListPrice(String(row.title ?? ""), Number(row.last_price), num(row.list_price))) continue;
+    await sql`UPDATE products SET list_price = NULL WHERE asin = ${String(row.asin)}`;
+  }
 }
 
 export async function getStatus(): Promise<Status> {
