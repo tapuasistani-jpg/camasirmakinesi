@@ -101,6 +101,17 @@ function clean(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+const UNIT_PRICE = /\/\s*\d*\s*(ml|cl|lt|kg|g|gr|adet)\b|\/\s*l\b|100\s*ml|birim fiyat|başına/i;
+
+function isUnitPrice(text: string): boolean {
+  return UNIT_PRICE.test(text.replace(/\s+/g, " "));
+}
+
+function perUnitMultiple(price: number, listPrice: number): boolean {
+  const ratio = listPrice / price;
+  return Math.abs(ratio - 100) / 100 < 0.03 || Math.abs(ratio - 1000) / 1000 < 0.03;
+}
+
 function priceFromCard(card: { find(selector: string): { first(): { text(): string } } }, strike: boolean): number | null {
   const selector = strike
     ? "span.a-price.a-text-price span.a-offscreen"
@@ -251,8 +262,18 @@ export function parseSearchPage(html: string): ProductCard[] {
     if (title.length < 3) return;
     const price = priceFromCard(card, false) ?? looseTl(card);
     if (price == null) return;
-    let listPrice = priceFromCard(card, true);
-    if (listPrice != null && listPrice <= price) listPrice = null;
+    const cardText = clean(card.text());
+    let listPrice: number | null = null;
+    card.find("span.a-price.a-text-price").each((__, priceNode) => {
+      if (listPrice != null) return;
+      const node = $(priceNode);
+      const around = clean(`${node.text()} ${node.next().text()} ${node.parent().text().slice(0, 220)}`);
+      const value = parsePrice(node.find("span.a-offscreen").first().text());
+      if (value == null || value <= price) return;
+      if (isUnitPrice(around)) return;
+      if (isUnitPrice(cardText) && perUnitMultiple(price, value)) return;
+      listPrice = value;
+    });
     const image = card.find("img.s-image").attr("src") || null;
     let condition = "";
     card.find("span").each((__, span) => {
@@ -323,6 +344,27 @@ export function assertAmazonParser(): void {
   `;
   const plainItems = parseSearchPage(plain);
   if (plainItems.length !== 1 || plainItems[0].price !== 249.9) throw new Error("düz fiyat okunamadı");
+  const unit = `
+    <div data-asin="B0UNITPRICE">
+      <h2><span>Urban Care Duş Jeli 500 ml</span></h2>
+      <span class="a-price"><span class="a-offscreen">145,45 TL</span></span>
+      <span class="a-price a-text-price"><span class="a-offscreen">14.543,00 TL</span></span>
+      <span> / 100 ml</span>
+    </div>
+  `;
+  const unitItems = parseSearchPage(unit);
+  if (unitItems.length !== 1 || unitItems[0].price !== 145.45 || unitItems[0].listPrice !== null) {
+    throw new Error("litre fiyatı indirim sanıldı");
+  }
+  const realSale = `
+    <div data-asin="B0REALSALE1">
+      <h2><span>Kulaklık</span></h2>
+      <span class="a-price"><span class="a-offscreen">200,00 TL</span></span>
+      <span class="a-price a-text-price"><span class="a-offscreen">1.000,00 TL</span></span>
+    </div>
+  `;
+  const realItems = parseSearchPage(realSale);
+  if (realItems.length !== 1 || realItems[0].listPrice !== 1000) throw new Error("gerçek indirim silindi");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
