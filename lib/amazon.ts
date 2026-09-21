@@ -128,7 +128,7 @@ function clean(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-const UNIT_PRICE = /\/\s*\d*\s*(ml|cl|lt|kg|g|gr|adet)\b|\/\s*l\b|100\s*ml|birim fiyat|başına/i;
+const UNIT_PRICE = /\/\s*\d*\s*(mm|cm|ml|cl|lt|kg|g|gr|adet|metre|meter|m)\b|\/\s*l\b|100\s*ml|birim fiyat|başına/i;
 
 function isUnitPrice(text: string): boolean {
   return UNIT_PRICE.test(text.replace(/\s+/g, " "));
@@ -142,16 +142,20 @@ function perUnitMultiple(price: number, listPrice: number): boolean {
 export function fakeListPrice(title: string, price: number, listPrice: number | null): boolean {
   if (listPrice == null || !(listPrice > price) || price <= 0) return false;
   if (perUnitMultiple(price, listPrice)) return true;
-  const match = title.match(/(\d+(?:[.,]\d+)?)\s*(ml|cl|lt|l|kg|g|gr)\b/i);
+  const match = title.match(/(\d+(?:[.,]\d+)?)\s*(mm|cm|metre|meter|ml|cl|lt|kg|g|gr|m|l)\b/i);
   if (!match) return false;
   const qty = Number(match[1].replace(/\./g, "").replace(",", "."));
   if (!Number.isFinite(qty) || qty <= 0) return false;
   const unit = match[2].toLowerCase();
-  const factors = unit === "ml" || unit === "g" || unit === "gr"
-    ? [100 / qty, 1000 / qty]
-    : unit === "cl"
-      ? [10 / qty, 100 / qty]
-      : [1 / qty, 100 / qty];
+  const factors = unit === "mm"
+    ? [10 / qty, 1000 / qty]
+    : unit === "cm"
+      ? [100 / qty]
+      : unit === "ml" || unit === "g" || unit === "gr"
+        ? [100 / qty, 1000 / qty]
+        : unit === "cl"
+          ? [10 / qty, 100 / qty]
+          : [1 / qty, 100 / qty];
   return factors.some((factor) => factor > 1.5 && Math.abs(price * factor - listPrice) / listPrice < 0.04);
 }
 
@@ -449,6 +453,17 @@ export function assertAmazonParser(): void {
   `;
   const nailItems = parseSearchPage(nail);
   if (nailItems.length !== 1 || nailItems[0].listPrice !== null) throw new Error("15 ml birim fiyatı indirim sanıldı");
+  const cable = `
+    <div data-asin="B0CABLE020C">
+      <h2><span>S-link Şarj Kablosu 20cm</span></h2>
+      <span class="a-price"><span class="a-offscreen">300,00 TL</span></span>
+      <span class="a-price a-text-price"><span class="a-offscreen">1.500,00 TL</span></span>
+      <span> / metre</span>
+    </div>
+  `;
+  const cableItems = parseSearchPage(cable);
+  if (cableItems.length !== 1 || cableItems[0].listPrice !== null) throw new Error("metre fiyatı indirim sanıldı");
+  if (!fakeListPrice("S-link Şarj Kablosu 20cm", 300, 1500)) throw new Error("20 cm metre hesabı kaçtı");
   if (!fakeListPrice("Bosch Disk 350 Mm", 3669, 366900)) throw new Error("100 kat fiyat kaçtı");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
