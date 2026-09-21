@@ -36,10 +36,27 @@ export function depoSearchUrl(query: string, page: number): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
+const ELEKTRONIK_NODE = "12466496031";
+
 export function pageTurnUrl(query: string, page: number): string {
   const url = new URL(depoSearchUrl(query, page));
-  if (page > 1) url.searchParams.set("ref", `sr_pg_${page}`);
+  if (page > 1) {
+    url.searchParams.set("pg", String(page));
+    url.searchParams.set("ref", `sr_pg_${page}`);
+  }
   return url.toString();
+}
+
+export function elektronikPageUrl(page: number): string {
+  const params = new URLSearchParams({
+    i: "warehouse-deals",
+    rh: `n:${ELEKTRONIK_NODE}`,
+    fs: "true",
+    page: String(page),
+    pg: String(page),
+    ref: `sr_pg_${page}`,
+  });
+  return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
 export function pageFlipUrl(html: string, currentUrl: string): string | null {
@@ -221,8 +238,10 @@ function explicitNext(html: string, currentUrl: string): string | null {
     const node = $(element);
     if (node.hasClass("s-pagination-disabled") || node.attr("aria-disabled") === "true") return;
     const label = `${node.attr("aria-label") || ""} ${node.text()}`.replace(/\s+/g, " ").trim();
-    if (node.hasClass("s-pagination-next") || /sonraki|next page|daha fazla sonuç/i.test(label)) {
-      take(node.attr("href"));
+    const href = node.attr("href") || "";
+    const pager = node.hasClass("s-pagination-next") || /pagination/i.test(node.attr("class") || "") || /(?:page|pg)=\d|sr_pg_\d/.test(href);
+    if (pager && (node.hasClass("s-pagination-next") || /sonraki|next page|daha fazla sonuç/i.test(label))) {
+      take(href);
     }
   });
   if (found) return found;
@@ -244,6 +263,20 @@ function explicitNext(html: string, currentUrl: string): string | null {
     best.url = url;
   });
   if (best.url) return best.url;
+  $("a.s-pagination-item[href], .s-pagination-strip a[href], .s-pagination-container a[href]").each((_, element) => {
+    const text = $(element).text().replace(/\s+/g, "").trim();
+    if (!/^\d+$/.test(text)) return;
+    const n = Number(text);
+    if (!Number.isFinite(n) || n <= current || n >= best.n) return;
+    const url = amazonUrl($(element).attr("href") || "");
+    if (!url) return;
+    best.n = n;
+    best.url = url;
+  });
+  if (best.url) return best.url;
+  const rawPg = html.match(new RegExp(`href="([^"]*(?:[?&](?:page|pg)=${current + 1}|sr_pg_${current + 1})[^"]*)"`, "i"));
+  const fromPg = rawPg ? amazonUrl(rawPg[1].replace(/&amp;/g, "&")) : null;
+  if (fromPg && fromPg !== currentUrl) return fromPg;
   const raw = html.match(/href="([^"]+)"[^>]*(?:s-pagination-next|rel="next")|s-pagination-next[^>]*href="([^"]+)"|rel="next"[^>]*href="([^"]+)"/i);
   const rawHref = raw?.[1] || raw?.[2] || raw?.[3] || "";
   const fromRaw = amazonUrl(rawHref);
@@ -370,6 +403,15 @@ export function assertAmazonParser(): void {
     "https://www.amazon.com.tr/s?k=Elektronik&page=1",
   );
   if (!flip?.includes("sr_pg_2")) throw new Error("elektronik sayfa çevirme kaçtı");
+  const numberedOnly = pageFlipUrl(
+    `<a class="s-pagination-item" href="/s?i=warehouse-deals&amp;page=2&amp;pg=2">2</a>`,
+    "https://www.amazon.com.tr/s?i=warehouse-deals&page=1",
+  );
+  if (!numberedOnly?.includes("pg=2")) throw new Error("sayfa numarası 2 okunamadı");
+  const nodeUrl = elektronikPageUrl(2);
+  if (!nodeUrl.includes("12466496031") || !nodeUrl.includes("page=2") || !nodeUrl.includes("i=warehouse-deals")) {
+    throw new Error("elektronik kategori adresi bozuk");
+  }
   const bumped = nextSearchPage("https://www.amazon.com.tr/s?k=Elektronik&i=warehouse-deals&page=1");
   if (!bumped?.includes("page=2")) throw new Error("sayfa artırılamadı");
   const plain = `

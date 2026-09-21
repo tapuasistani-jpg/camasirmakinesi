@@ -1,4 +1,4 @@
-import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, seeAllResultsUrl } from "@/lib/amazon";
+import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, seeAllResultsUrl } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
@@ -187,6 +187,7 @@ export async function scanOnce(onlyRaw?: string) {
   const started = Date.now();
   const seenAsins = new Set<string>();
   const seenUrls = new Set<string>();
+  let elektronikNode = true;
   let seen = 0;
   let pages = 0;
   let label = depoQueryLabel(DEPO_QUERIES[queryIndex] ?? "");
@@ -197,8 +198,10 @@ export async function scanOnce(onlyRaw?: string) {
     const query = pinned || (DEPO_QUERIES[queryIndex] ?? "");
     label = depoQueryLabel(query);
     const flip = /elektronik/i.test(query);
-    if (flip && nextUrl && !/[?&]page=\d/.test(nextUrl) && !/sr_pg_\d/.test(nextUrl)) nextUrl = null;
-    const url = flip ? (nextUrl || pageTurnUrl(query, page)) : (nextUrl || depoSearchUrl(query, 1));
+    if (flip && nextUrl && !/[?&](?:page|pg)=\d/.test(nextUrl) && !/sr_pg_\d/.test(nextUrl)) nextUrl = null;
+    const url = flip
+      ? (nextUrl || (elektronikNode ? elektronikPageUrl(page) : pageTurnUrl(query, page)))
+      : (nextUrl || depoSearchUrl(query, 1));
     let html = "";
     let detail = "";
     try {
@@ -221,8 +224,14 @@ export async function scanOnce(onlyRaw?: string) {
     const fresh = items.filter((item) => !seenAsins.has(item.asin));
     fresh.forEach((item) => seenAsins.add(item.asin));
     seenUrls.add(url);
-    let more = flip ? pageFlipUrl(html, url) : continueResultsUrl(html, url);
-    if (flip && fresh.length > 0 && !more && page < PAGE_CAP) more = pageTurnUrl(query, page + 1);
+    if (flip && elektronikNode && page === 1 && items.length === 0) {
+      elektronikNode = false;
+      await addLog("uyari", `Elektronik kategori listesi açılmadı. ${detail} Arama kutusundan devam.`);
+      pages += 1;
+      continue;
+    }
+    const generatedNext = flip ? (elektronikNode ? elektronikPageUrl(page + 1) : pageTurnUrl(query, page + 1)) : "";
+    let more = flip ? (pageFlipUrl(html, url) || (fresh.length > 0 && page < PAGE_CAP ? generatedNext : null)) : continueResultsUrl(html, url);
     const seeAll = seeAllResultsUrl(html);
     if (!flip && items.length > 0 && fresh.length === 0 && seeAll && seeAll !== url && !seenUrls.has(seeAll)) {
       await addLog("bilgi", `Amazon Depo "${label}" sayfa ${page}: aynı ürünler geldi. Tüm sonuçları gör var, listeye giriliyor.`);
@@ -265,7 +274,7 @@ export async function scanOnce(onlyRaw?: string) {
     }
     pages += 1;
     if (more && page < PAGE_CAP) {
-      const turned = flip ? pageTurnUrl(query, page + 1) : "";
+      const turned = generatedNext;
       await addLog("bilgi", flip
         ? `Amazon Depo "${label}" sayfa ${page}: ${fresh.length} ürün. Sayfa ${page + 1}'e geçiliyor.`
         : `Amazon Depo "${label}" sayfa ${page}: ${fresh.length} ürün. Sonraki sayfa var, iniliyor.`);
