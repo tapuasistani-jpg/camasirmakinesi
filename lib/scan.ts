@@ -1,7 +1,8 @@
-import { DEPO_QUERIES, USER_AGENT, depoQueryLabel, depoSearchUrl, isBlocked, parseSearchPage } from "@/lib/amazon";
+import { DEPO_QUERIES, USER_AGENT, continueTarget, depoQueryLabel, depoSearchUrl, isBlocked, pageSummary, parseSearchPage } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
+  countProducts,
   dropPending,
   enqueuePending,
   getConfig,
@@ -18,19 +19,61 @@ import { searchPrices } from "@/lib/market";
 import { formatAlert, sendMessage } from "@/lib/telegram";
 import { decide, percentOff } from "@/lib/verdict";
 
-async function fetchAmazon(url: string): Promise<string> {
+const BROWSER_HEADERS = {
+  "User-Agent": USER_AGENT,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+  "Cache-Control": "no-cache",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "sec-ch-ua": '"Chromium";v="128", "Google Chrome";v="128", "Not;A=Brand";v="24"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+};
+
+function mergeCookies(existing: string, response: Response): string {
+  const jar = new Map<string, string>();
+  for (const part of existing.split(";").map((item) => item.trim()).filter(Boolean)) {
+    const cut = part.indexOf("=");
+    if (cut > 0) jar.set(part.slice(0, cut), part.slice(cut + 1));
+  }
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const baked = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : [];
+  const rows = baked.length ? baked : (response.headers.get("set-cookie") ? [response.headers.get("set-cookie") as string] : []);
+  for (const raw of rows) {
+    const pair = raw.split(";")[0] || "";
+    const cut = pair.indexOf("=");
+    if (cut > 0) jar.set(pair.slice(0, cut).trim(), pair.slice(cut + 1).trim());
+  }
+  return [...jar.entries()].map(([key, value]) => `${key}=${value}`).join("; ");
+}
+
+async function requestAmazon(url: string, cookies: string, referer: string): Promise<{ html: string; status: number; cookies: string }> {
   const response = await fetch(url, {
-    headers: {
-      "User-Agent": USER_AGENT,
-      "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5",
-      Accept: "text/html,application/xhtml+xml",
-      Referer: "https://www.amazon.com.tr/",
-    },
+    headers: { ...BROWSER_HEADERS, Cookie: cookies, Referer: referer },
     redirect: "follow",
     signal: AbortSignal.timeout(20000),
   });
-  if (!response.ok) throw new Error(`Amazon ${response.status}`);
-  return response.text();
+  const html = await response.text();
+  return { html, status: response.status, cookies: mergeCookies(cookies, response) };
+}
+
+async function fetchAmazon(url: string): Promise<{ html: string; detail: string }> {
+  const home = await requestAmazon("https://www.amazon.com.tr/", "", "https://www.amazon.com.tr/");
+  let page = await requestAmazon(url, home.cookies, "https://www.amazon.com.tr/");
+  if (page.status >= 400 || isBlocked(page.html)) {
+    const gate = continueTarget(page.html);
+    if (gate.url && !gate.captcha) {
+      page = await requestAmazon(gate.url, page.cookies, url);
+    }
+  }
+  if (page.status >= 400 && !page.html.includes("data-asin=")) {
+    throw new Error(`Amazon ${page.status}`);
+  }
+  return { html: page.html, detail: pageSummary(page.html) };
 }
 
 async function judgeOne(): Promise<number> {
@@ -138,27 +181,41 @@ function nextSearch(page: number, queryIndex: number, finished: boolean) {
 export async function scanOnce() {
   const config = await getConfig();
   const state = await readState();
-  const page = state.page;
-  const queryIndex = state.queryIndex % DEPO_QUERIES.length;
+  const known = await countProducts();
+  let page = state.page;
+  let queryIndex = state.queryIndex % DEPO_QUERIES.length;
+  if (known === 0) {
+    page = 1;
+    queryIndex = 0;
+  }
   const query = DEPO_QUERIES[queryIndex] ?? "";
   const label = depoQueryLabel(query);
   const url = depoSearchUrl(query, page);
   let html = "";
+  let detail = "";
   try {
-    html = await fetchAmazon(url);
+    const loaded = await fetchAmazon(url);
+    html = loaded.html;
+    detail = loaded.detail;
   } catch (error) {
     const message = error instanceof Error ? error.message : "sayfa açılmadı";
     await addLog("hata", `Amazon Depo araması "${label}" sayfa ${page} açılmadı: ${message}`);
     await writeState(page, queryIndex, "Amazon sayfası açılmadı");
-    return { ok: false, blocked: false, page, seen: 0, judged: 0, sent: 0 };
+    return { ok: false, blocked: true, page, seen: 0, judged: 0, sent: 0 };
   }
   if (isBlocked(html)) {
-    await addLog("hata", "Amazon erişimi kesti. Sonraki tura kalındı.");
+    await addLog("hata", `Amazon robot sayfası verdi, liste sayılmadı. ${detail}`);
     await writeState(page, queryIndex, "Amazon robot kontrolü gösterdi.");
     return { ok: true, blocked: true, page, seen: 0, judged: 0, sent: 0 };
   }
   const items = parseSearchPage(html);
   if (!items.length) {
+    const realEmpty = /sonuç bulunamadı|no results for|did not match/i.test(html);
+    if (!realEmpty) {
+      await addLog("hata", `Sayfa geldi ama ürün okunamadı. ${detail}`);
+      await writeState(page, queryIndex, "Ürün kartları okunamadı.");
+      return { ok: true, blocked: true, page, seen: 0, judged: 0, sent: 0 };
+    }
     const next = nextSearch(page, queryIndex, true);
     await addLog("uyari", `Amazon Depo "${label}" sayfa ${page} boş. Sıradaki aramaya geçildi.`);
     await writeState(next.page, next.queryIndex, "Bu aramada başka ürün çıkmadı");

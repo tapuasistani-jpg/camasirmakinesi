@@ -68,14 +68,59 @@ export function parsePrice(text: string | null | undefined): number | null {
 }
 
 export function isBlocked(html: string): boolean {
-  if (!html) return true;
-  return [
-    "validateCaptcha",
-    "Robot Check",
-    "Type the characters you see",
-    "/errors/validateCaptcha",
+  if (!html || html.length < 500) return true;
+  const lowered = html.toLowerCase();
+  const needles = [
+    "validatecaptcha",
+    "robot check",
+    "type the characters you see",
+    "/errors/validatecaptcha",
     "api-services-support@amazon.com",
-  ].some((needle) => html.includes(needle));
+    "captchacharacters",
+    "opfcaptcha",
+    "automated access",
+    "otomatik erişim",
+    "sorry! something went wrong",
+    "üzgünüz",
+    "dogs of amazon",
+    "continue shopping",
+    "alışverişe devam",
+  ];
+  if (needles.some((needle) => lowered.includes(needle))) return true;
+  const cards = html.match(/data-asin="[A-Z0-9]{10}"/gi)?.length ?? 0;
+  const looksLikeResults = /s-search-result|s-result-item|data-component-type="s-search-result"/i.test(html);
+  return cards === 0 && !looksLikeResults;
+}
+
+export function pageSummary(html: string): string {
+  const title = (html.match(/<title>([^<]{0,80})/i)?.[1] || "başlıksız").replace(/\s+/g, " ").trim();
+  const cards = html.match(/data-asin="[A-Z0-9]{10}"/gi)?.length ?? 0;
+  return `${title} · ${cards} kart · ${html.length} bayt`;
+}
+
+export function continueTarget(html: string): { url: string | null; captcha: boolean } {
+  if (/captchacharacters|validateCaptcha|opfcaptcha/i.test(html)) return { url: null, captcha: true };
+  const $ = cheerio.load(html);
+  const link = $("a")
+    .toArray()
+    .map((element) => $(element).attr("href") || "")
+    .find((href) => /cs_503|continue|alisveris/i.test(href));
+  const form = $("form[action]").first();
+  const action = form.attr("action") || "";
+  const raw = link || action;
+  if (!raw) return { url: null, captcha: false };
+  if (form.find("img[src*='captcha'], input[name='field-keywords']").length) return { url: null, captcha: true };
+  const base = raw.startsWith("http") ? raw : `https://www.amazon.com.tr${raw.startsWith("/") ? raw : `/${raw}`}`;
+  if (!base.startsWith("https://www.amazon.com.tr/")) return { url: null, captcha: false };
+  if (!form.length || link) return { url: base, captcha: false };
+  const params = new URLSearchParams();
+  form.find("input[name]").each((_, element) => {
+    const name = $(element).attr("name");
+    if (!name) return;
+    params.set(name, $(element).attr("value") || "");
+  });
+  const joiner = base.includes("?") ? "&" : "?";
+  return { url: params.size ? `${base}${joiner}${params.toString()}` : base, captcha: false };
 }
 
 function clean(text: string): string {
@@ -105,7 +150,13 @@ export function parseSearchPage(html: string): ProductCard[] {
     const card = $(element);
     const asin = (card.attr("data-asin") || "").trim().toUpperCase();
     if (!/^[A-Z0-9]{10}$/.test(asin) || seen.has(asin)) return;
-    const title = clean(card.find("h2 span").first().text() || card.find("h2").first().text());
+    const title = clean(
+      card.find("h2 span").first().text()
+      || card.find("h2").first().text()
+      || card.find("a.a-link-normal span").first().text()
+      || card.find("img").first().attr("alt")
+      || "",
+    );
     if (title.length < 3) return;
     const price = priceFromCard(card, false);
     if (price == null) return;
@@ -150,4 +201,15 @@ export function assertAmazonParser(): void {
     throw new Error("fiyat ayrıştırıcı bozuldu");
   }
   if (!isBlocked("<html>validateCaptcha</html>")) throw new Error("engel ayrıştırıcı bozuldu");
+  const loose = `
+    <div data-asin="B0TEST5678" data-component-type="s-search-result">
+      <a class="a-link-normal"><span>Başka Ürün</span></a>
+      <span class="a-price"><span class="a-offscreen">499,90 TL</span></span>
+    </div>
+  `;
+  const looseItems = parseSearchPage(loose);
+  if (looseItems.length !== 1 || looseItems[0].price !== 499.9) throw new Error("başlıksız kart okunamadı");
+  const normal = `<html><title>Amazon Depo</title>${"x".repeat(600)}<div data-asin="B0TEST1234" data-component-type="s-search-result"></div></html>`;
+  if (isBlocked(normal)) throw new Error("normal sayfa engel sayıldı");
+  if (!isBlocked(`<html>${"x".repeat(800)}<p>Üzgünüz</p></html>`)) throw new Error("robot sayfası kaçtı");
 }

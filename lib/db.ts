@@ -285,6 +285,12 @@ export async function markNotified(id: number): Promise<void> {
   await db()`UPDATE alerts SET notified = 1 WHERE id = ${id}`;
 }
 
+export async function countProducts(): Promise<number> {
+  await ensureSchema();
+  const rows = (await db()`SELECT COUNT(*)::int AS n FROM products`) as Row[];
+  return num(rows[0]?.n) ?? 0;
+}
+
 export async function readState(): Promise<{ page: number; queryIndex: number; lastError: string | null; lastScanAt: string | null }> {
   await ensureSchema();
   const rows = (await db()`SELECT page, query_index, last_error, last_scan_at FROM scan_state WHERE id = 1`) as Row[];
