@@ -1,0 +1,383 @@
+import { neon } from "@neondatabase/serverless";
+
+import { DEPO_QUERIES, SEARCH_URL, depoQueryLabel } from "@/lib/amazon";
+import type { ProductCard } from "@/lib/amazon";
+import type { Status } from "@/lib/types";
+import type { Verdict } from "@/lib/verdict";
+
+type Sql = ReturnType<typeof neon>;
+type Row = Record<string, unknown>;
+
+let schema: Promise<void> | null = null;
+
+export function databaseUrl(): string | null {
+  return process.env.POSTGRES_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL_NON_POOLING || null;
+}
+
+function db(): Sql {
+  const url = databaseUrl();
+  if (!url) throw new Error("POSTGRES_URL yok");
+  return neon(url);
+}
+
+export async function ensureSchema(): Promise<void> {
+  if (!schema) {
+    schema = migrate().catch((error) => {
+      schema = null;
+      throw error;
+    });
+  }
+  await schema;
+}
+
+async function migrate(): Promise<void> {
+  const sql = db();
+  await sql`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`;
+  await sql`CREATE TABLE IF NOT EXISTS products (
+    asin TEXT PRIMARY KEY,
+    title TEXT,
+    url TEXT,
+    image TEXT,
+    condition TEXT,
+    last_price DOUBLE PRECISION,
+    list_price DOUBLE PRECISION,
+    highest_price DOUBLE PRECISION,
+    lowest_price DOUBLE PRECISION,
+    first_seen TIMESTAMPTZ,
+    last_seen TIMESTAMPTZ
+  )`;
+  await sql`CREATE TABLE IF NOT EXISTS price_points (
+    id BIGSERIAL PRIMARY KEY,
+    asin TEXT,
+    price DOUBLE PRECISION,
+    list_price DOUBLE PRECISION,
+    seen_at TIMESTAMPTZ DEFAULT NOW()
+  )`;
+  await sql`CREATE TABLE IF NOT EXISTS alerts (
+    id BIGSERIAL PRIMARY KEY,
+    asin TEXT,
+    title TEXT,
+    url TEXT,
+    image TEXT,
+    price DOUBLE PRECISION,
+    list_price DOUBLE PRECISION,
+    highest_price DOUBLE PRECISION,
+    discount DOUBLE PRECISION,
+    market_median DOUBLE PRECISION,
+    market_samples INT,
+    verdict TEXT,
+    detail TEXT,
+    wants_notify INT DEFAULT 0,
+    notified INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`;
+  await sql`CREATE TABLE IF NOT EXISTS pending (
+    asin TEXT PRIMARY KEY,
+    title TEXT,
+    url TEXT,
+    image TEXT,
+    price DOUBLE PRECISION,
+    list_price DOUBLE PRECISION,
+    highest_price DOUBLE PRECISION,
+    samples INT,
+    tries INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`;
+  await sql`CREATE TABLE IF NOT EXISTS scan_log (
+    id BIGSERIAL PRIMARY KEY,
+    level TEXT,
+    message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`;
+  await sql`CREATE TABLE IF NOT EXISTS scan_state (
+    id INT PRIMARY KEY,
+    page INT NOT NULL,
+    last_error TEXT,
+    last_scan_at TIMESTAMPTZ
+  )`;
+  await sql`INSERT INTO scan_state (id, page) VALUES (1, 1) ON CONFLICT (id) DO NOTHING`;
+  await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS query_index INT NOT NULL DEFAULT 0`;
+}
+
+function num(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function iso(value: unknown): string | null {
+  if (!value) return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toISOString();
+}
+
+function mask(token: string): string {
+  if (!token) return "";
+  if (token.length < 10) return "kayıtlı";
+  return `${token.slice(0, 4)}••••${token.slice(-4)}`;
+}
+
+export function validTemplate(value: string | null | undefined): string | null {
+  const url = (value || "").trim();
+  if (!url.startsWith("https://www.amazon.com.tr/") || !url.includes("{page}")) return null;
+  return url;
+}
+
+async function settingsMap(): Promise<Record<string, string>> {
+  const rows = (await db()`SELECT key, value FROM settings`) as Row[];
+  return Object.fromEntries(rows.map((row) => [String(row.key), String(row.value ?? "")]));
+}
+
+export async function getConfig() {
+  await ensureSchema();
+  const map = await settingsMap();
+  const min = Number(map.min_discount || process.env.MIN_DISCOUNT || 80);
+  return {
+    token: map.bot_token || process.env.TELEGRAM_BOT_TOKEN || "",
+    chatId: map.chat_id || process.env.TELEGRAM_CHAT_ID || "",
+    minDiscount: Math.min(95, Math.max(40, Number.isFinite(min) ? min : 80)),
+    notifySuspicious: map.notify_suspicious === "1",
+    urlTemplate: validTemplate(map.url_template) || SEARCH_URL,
+  };
+}
+
+async function putSetting(key: string, value: string): Promise<void> {
+  await db()`INSERT INTO settings (key, value) VALUES (${key}, ${value})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+}
+
+export async function saveSettings(input: {
+  botToken?: string;
+  clearToken?: boolean;
+  chatId?: string;
+  minDiscount?: number;
+  notifySuspicious?: boolean;
+  urlTemplate?: string;
+}): Promise<void> {
+  await ensureSchema();
+  if (input.clearToken) await putSetting("bot_token", "");
+  const token = (input.botToken || "").trim();
+  if (token && !token.includes("••••")) await putSetting("bot_token", token);
+  if (input.chatId != null) await putSetting("chat_id", input.chatId.trim());
+  if (input.minDiscount != null && Number.isFinite(input.minDiscount)) {
+    await putSetting("min_discount", String(Math.min(95, Math.max(40, Math.round(input.minDiscount)))));
+  }
+  if (input.notifySuspicious != null) await putSetting("notify_suspicious", input.notifySuspicious ? "1" : "0");
+  if (input.urlTemplate) {
+    const url = validTemplate(input.urlTemplate);
+    if (!url) throw new Error("Adres https://www.amazon.com.tr/ ile başlamalı ve {page} içermeli");
+    await putSetting("url_template", url);
+  }
+}
+
+export async function addLog(level: string, message: string): Promise<void> {
+  const sql = db();
+  await sql`INSERT INTO scan_log (level, message) VALUES (${level}, ${message.slice(0, 500)})`;
+  await sql`DELETE FROM scan_log WHERE id NOT IN (SELECT id FROM scan_log ORDER BY id DESC LIMIT 200)`;
+  console.log(`[${level}] ${message}`);
+}
+
+export async function upsertProduct(item: ProductCard): Promise<{ highest: number; samples: number; inserted: boolean }> {
+  const sql = db();
+  const existing = (await sql`SELECT * FROM products WHERE asin = ${item.asin}`) as Row[];
+  if (!existing.length) {
+    await sql`INSERT INTO products (
+      asin, title, url, image, condition, last_price, list_price, highest_price, lowest_price, first_seen, last_seen
+    ) VALUES (
+      ${item.asin}, ${item.title}, ${item.url}, ${item.image}, ${item.condition},
+      ${item.price}, ${item.listPrice}, ${item.price}, ${item.price}, NOW(), NOW()
+    )`;
+    await sql`INSERT INTO price_points (asin, price, list_price) VALUES (${item.asin}, ${item.price}, ${item.listPrice})`;
+    return { highest: item.price, samples: 1, inserted: true };
+  }
+  const row = existing[0];
+  const previous = num(row.last_price) ?? item.price;
+  const highest = Math.max(num(row.highest_price) ?? item.price, item.price);
+  const lowest = Math.min(num(row.lowest_price) ?? item.price, item.price);
+  const listPrice = item.listPrice ?? num(row.list_price);
+  const inserted = Math.abs(previous - item.price) > 0.009;
+  await sql`UPDATE products SET
+    title = ${item.title},
+    url = ${item.url},
+    image = COALESCE(${item.image}, image),
+    condition = COALESCE(NULLIF(${item.condition}, ''), condition),
+    last_price = ${item.price},
+    list_price = ${listPrice},
+    highest_price = ${highest},
+    lowest_price = ${lowest},
+    last_seen = NOW()
+    WHERE asin = ${item.asin}`;
+  if (inserted) {
+    await sql`INSERT INTO price_points (asin, price, list_price) VALUES (${item.asin}, ${item.price}, ${listPrice})`;
+  }
+  const count = (await sql`SELECT COUNT(*)::int AS n FROM price_points WHERE asin = ${item.asin}`) as Row[];
+  return { highest, samples: num(count[0]?.n) ?? 1, inserted };
+}
+
+export async function needsFreshVerdict(asin: string, price: number): Promise<boolean> {
+  const rows = (await db()`SELECT price, verdict, created_at FROM alerts WHERE asin = ${asin} ORDER BY id DESC LIMIT 1`) as Row[];
+  const row = rows[0];
+  if (!row || num(row.price) == null) return true;
+  const old = num(row.price) as number;
+  if (price < old * 0.9) return true;
+  if (Math.abs(old - price) / Math.max(price, 1) > 0.08) return true;
+  if (row.verdict === "kararsiz") {
+    const seen = new Date(String(row.created_at)).getTime();
+    if (Date.now() - seen > 12 * 60 * 60 * 1000) return true;
+  }
+  return false;
+}
+
+export async function enqueuePending(item: ProductCard, memory: { highest: number; samples: number }): Promise<void> {
+  await db()`INSERT INTO pending (asin, title, url, image, price, list_price, highest_price, samples, tries)
+    VALUES (${item.asin}, ${item.title}, ${item.url}, ${item.image}, ${item.price}, ${item.listPrice}, ${memory.highest}, ${memory.samples}, 0)
+    ON CONFLICT (asin) DO UPDATE SET
+      title = EXCLUDED.title,
+      price = EXCLUDED.price,
+      list_price = EXCLUDED.list_price,
+      highest_price = GREATEST(pending.highest_price, EXCLUDED.highest_price),
+      samples = EXCLUDED.samples`;
+}
+
+export async function takePending(): Promise<Row | null> {
+  const rows = (await db()`SELECT * FROM pending ORDER BY created_at ASC LIMIT 1`) as Row[];
+  return rows[0] ?? null;
+}
+
+export async function bumpPending(asin: string): Promise<number> {
+  const rows = (await db()`UPDATE pending SET tries = tries + 1 WHERE asin = ${asin} RETURNING tries`) as Row[];
+  return num(rows[0]?.tries) ?? 1;
+}
+
+export async function dropPending(asin: string): Promise<void> {
+  await db()`DELETE FROM pending WHERE asin = ${asin}`;
+}
+
+export async function insertAlert(input: {
+  asin: string;
+  title: string;
+  url: string;
+  image: string | null;
+  price: number;
+  listPrice: number | null;
+  highestPrice: number | null;
+  verdict: Verdict;
+  notify: boolean;
+}): Promise<void> {
+  const verdict = input.verdict;
+  await db()`INSERT INTO alerts (
+    asin, title, url, image, price, list_price, highest_price, discount,
+    market_median, market_samples, verdict, detail, wants_notify, notified
+  ) VALUES (
+    ${input.asin}, ${input.title}, ${input.url}, ${input.image}, ${input.price}, ${input.listPrice},
+    ${input.highestPrice}, ${verdict.discount}, ${verdict.marketMedian}, ${verdict.marketSamples},
+    ${verdict.verdict}, ${verdict.detail}, ${input.notify ? 1 : 0}, 0
+  )`;
+}
+
+export async function nextUnsent(): Promise<Row | null> {
+  const rows = (await db()`SELECT * FROM alerts WHERE wants_notify = 1 AND notified = 0 ORDER BY id ASC LIMIT 1`) as Row[];
+  return rows[0] ?? null;
+}
+
+export async function markNotified(id: number): Promise<void> {
+  await db()`UPDATE alerts SET notified = 1 WHERE id = ${id}`;
+}
+
+export async function readState(): Promise<{ page: number; queryIndex: number; lastError: string | null; lastScanAt: string | null }> {
+  await ensureSchema();
+  const rows = (await db()`SELECT page, query_index, last_error, last_scan_at FROM scan_state WHERE id = 1`) as Row[];
+  const row = rows[0];
+  return {
+    page: Math.max(1, num(row?.page) ?? 1),
+    queryIndex: Math.max(0, num(row?.query_index) ?? 0),
+    lastError: row?.last_error ? String(row.last_error) : null,
+    lastScanAt: iso(row?.last_scan_at),
+  };
+}
+
+export async function writeState(page: number, queryIndex: number, lastError: string | null): Promise<void> {
+  await db()`UPDATE scan_state SET page = ${page}, query_index = ${queryIndex}, last_error = ${lastError}, last_scan_at = NOW() WHERE id = 1`;
+}
+
+function blankStatus(message: string): Status {
+  return {
+    ready: false,
+    message,
+    page: 1,
+    search: "Amazon Depo · boş arama",
+    productCount: 0,
+    dealCount: 0,
+    lastScanAt: null,
+    lastError: null,
+    minDiscount: 80,
+    hasToken: false,
+    tokenHint: "",
+    chatId: "",
+    notifySuspicious: false,
+    urlTemplate: SEARCH_URL,
+    alerts: [],
+    recent: [],
+    logs: [],
+  };
+}
+
+export async function getStatus(): Promise<Status> {
+  if (!databaseUrl()) {
+    return blankStatus("Postgres bağlı değil. Vercel'de Storage → Create Database → Postgres.");
+  }
+  await ensureSchema();
+  const sql = db();
+  const config = await getConfig();
+  const state = await readState();
+  const query = DEPO_QUERIES[state.queryIndex % DEPO_QUERIES.length] ?? "";
+  const products = (await sql`SELECT COUNT(*)::int AS n FROM products`) as Row[];
+  const deals = (await sql`SELECT COUNT(*)::int AS n FROM alerts WHERE verdict = 'evet'`) as Row[];
+  const alerts = (await sql`SELECT * FROM alerts ORDER BY id DESC LIMIT 40`) as Row[];
+  const recent = (await sql`SELECT asin, title, url, image, last_price, list_price FROM products ORDER BY last_seen DESC LIMIT 8`) as Row[];
+  const logs = (await sql`SELECT level, message, created_at FROM scan_log ORDER BY id DESC LIMIT 25`) as Row[];
+  return {
+    ready: true,
+    message: "",
+    page: state.page,
+    search: `Amazon Depo · ${depoQueryLabel(query)}`,
+    productCount: num(products[0]?.n) ?? 0,
+    dealCount: num(deals[0]?.n) ?? 0,
+    lastScanAt: state.lastScanAt,
+    lastError: state.lastError,
+    minDiscount: config.minDiscount,
+    hasToken: Boolean(config.token),
+    tokenHint: mask(config.token),
+    chatId: config.chatId,
+    notifySuspicious: config.notifySuspicious,
+    urlTemplate: config.urlTemplate,
+    alerts: alerts.map((row) => ({
+      id: num(row.id) ?? 0,
+      asin: String(row.asin),
+      title: String(row.title ?? ""),
+      url: String(row.url ?? ""),
+      image: row.image ? String(row.image) : null,
+      price: num(row.price) ?? 0,
+      listPrice: num(row.list_price),
+      discount: num(row.discount) ?? 0,
+      marketMedian: num(row.market_median),
+      verdict: String(row.verdict ?? ""),
+      detail: String(row.detail ?? ""),
+      createdAt: iso(row.created_at),
+    })),
+    recent: recent.map((row) => ({
+      asin: String(row.asin),
+      title: String(row.title ?? ""),
+      url: String(row.url ?? ""),
+      image: row.image ? String(row.image) : null,
+      price: num(row.last_price) ?? 0,
+      listPrice: num(row.list_price),
+    })),
+    logs: logs.map((row) => ({
+      level: String(row.level ?? ""),
+      message: String(row.message ?? ""),
+      createdAt: iso(row.created_at),
+    })),
+  };
+}
