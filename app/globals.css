@@ -29,7 +29,7 @@ body {
 
 .gate .panel { width: min(420px, 100%); }
 
-header, main, .log-panel, .stats, .banner {
+header, main, .log-panel, .stats, .banner, .lookup {
   width: min(1120px, calc(100% - 32px));
   margin-left: auto;
   margin-right: auto;
@@ -162,13 +162,19 @@ input[type="text"], input[type="password"], input[type="number"], select {
 .buttons, .chats { display: flex; flex-wrap: wrap; gap: 8px; }
 .chats button, .ghost { background: white; color: var(--ink); }
 
+.lookup { margin-bottom: 14px; }
+.lookup form { grid-template-columns: 1fr auto; align-items: end; }
+.offers { margin: 12px 0 0; padding: 0; list-style: none; }
+.offers li { display: grid; gap: 2px; padding: 8px 0; border-top: 1px solid rgba(28, 25, 21, 0.15); }
+.offers .cheapest b { color: var(--green); }
+
 .log-panel { margin: 14px auto 32px; }
 #log, .log { margin: 8px 0 0; padding-left: 18px; }
 .log li { margin: 3px 0; }
 .empty { color: var(--muted); }
 
 @media (max-width: 860px) {
-  header, main, .stats { display: grid; grid-template-columns: 1fr; }
+  header, main, .stats, .lookup form { display: grid; grid-template-columns: 1fr; }
   h1 { font-size: 32px; }
   .stats { grid-template-columns: 1fr 1fr; }
 }

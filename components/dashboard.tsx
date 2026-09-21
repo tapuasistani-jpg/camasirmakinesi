@@ -60,6 +60,9 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState("Elektronik");
   const [customCategory, setCustomCategory] = useState("");
+  const [lookup, setLookup] = useState("");
+  const [looking, setLooking] = useState(false);
+  const [offers, setOffers] = useState<{ shop: string; title: string; url: string; price: number }[]>([]);
   const filled = useRef(false);
 
   useEffect(() => {
@@ -170,6 +173,30 @@ export default function Dashboard() {
     await load();
   }
 
+  async function compare(event: React.FormEvent) {
+    event.preventDefault();
+    const name = lookup.trim();
+    if (name.length < 2) {
+      say("Ürün adını yaz", false);
+      return;
+    }
+    setLooking(true);
+    sessionStorage.setItem("camasir-admin", password);
+    const response = await fetch("/api/compare", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ name }),
+    });
+    const data = await response.json();
+    setLooking(false);
+    if (!response.ok) {
+      say(data.error || "Arama açılmadı", false);
+      return;
+    }
+    setOffers(data.offers || []);
+    say(data.cheapest ? `En ucuz: ${data.cheapest.shop}` : "Bu isimle fiyat çıkmadı.", Boolean(data.cheapest));
+  }
+
   async function enter(event: React.FormEvent) {
     event.preventDefault();
     const response = await fetch("/api/login", {
@@ -236,6 +263,28 @@ export default function Dashboard() {
         <div className="stat"><span>Net fırsat</span><b>{status?.dealCount ?? "—"}</b></div>
         <div className="stat"><span>{status?.search ?? "Amazon Depo"}</span><b>sayfa {status?.page ?? "—"}</b></div>
         <div className="stat"><span>Son tarama</span><b style={{ fontSize: 16 }}>{when(status?.lastScanAt)}</b></div>
+      </section>
+
+      <section className="panel lookup">
+        <h2>En ucuz nerede</h2>
+        <p className="hint">Ürün adını yaz. Depo taramasından ayrıdır. Basınca Türkiye’de satış yapan sitelere bakar, en ucuzu üste gelir.</p>
+        <form onSubmit={compare}>
+          <label>Ürün adı
+            <input type="text" value={lookup} placeholder="örnek: S-link Lightning kablo 20 cm" onChange={(event) => setLookup(event.target.value)} />
+          </label>
+          <button type="submit" disabled={looking}>{looking ? "Bakılıyor" : "En ucuzu bul"}</button>
+        </form>
+        {offers.length ? (
+          <ol className="offers">
+            {offers.map((offer, index) => (
+              <li key={`${offer.url}-${offer.price}`} className={index === 0 ? "cheapest" : ""}>
+                <b>{index === 0 ? "En ucuz · " : ""}{offer.shop}</b>
+                <span className="price">{tl(offer.price)}</span>
+                <a href={offer.url} target="_blank" rel="noopener noreferrer">{offer.title}</a>
+              </li>
+            ))}
+          </ol>
+        ) : null}
       </section>
 
       <main>
