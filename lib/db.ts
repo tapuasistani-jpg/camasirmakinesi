@@ -124,6 +124,24 @@ export async function writeAisleCursor(label: string, cursor: AisleCursor): Prom
   await putSetting("aisle_cursor", JSON.stringify(all).slice(0, 4000));
 }
 
+export async function readRuntime(): Promise<{ cookies: string; cookiesAt: number; coolUntil: number }> {
+  const map = await settingsMap();
+  return {
+    cookies: map.amazon_cookies || "",
+    cookiesAt: Number(map.amazon_cookies_at || 0) || 0,
+    coolUntil: Number(map.cool_until || 0) || 0,
+  };
+}
+
+export async function writeCookies(cookies: string): Promise<void> {
+  await putSetting("amazon_cookies", cookies.slice(0, 3000));
+  await putSetting("amazon_cookies_at", String(Date.now()));
+}
+
+export async function setCooldown(untilMs: number): Promise<void> {
+  await putSetting("cool_until", String(Math.round(untilMs)));
+}
+
 export async function tagAisle(asins: string[], label: string): Promise<void> {
   if (!asins.length) return;
   await db()`UPDATE products SET aisle = ${label}, aisle_seen = NOW() WHERE asin = ANY(${asins})`;

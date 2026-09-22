@@ -11,7 +11,10 @@ import {
   needsFreshVerdict,
   nextUnsent,
   readAisleCursors,
+  readRuntime,
   readState,
+  setCooldown,
+  writeCookies,
   tagAisle,
   takePending,
   writeAisle,
@@ -208,8 +211,24 @@ export async function scanOnce(onlyRaw?: string) {
   let seen = 0;
   let pages = 0;
   let label = depoQueryLabel(DEPO_QUERIES[queryIndex] ?? "");
-  const home = await requestAmazon("https://www.amazon.com.tr/", "", "https://www.amazon.com.tr/");
-  let cookies = home.cookies;
+
+  // Amazon kapıyı kapattıysa üstüne gitmeyelim, blok uzuyor.
+  const runtime = await readRuntime();
+  if (!manual && runtime.coolUntil > Date.now()) {
+    const left = Math.ceil((runtime.coolUntil - Date.now()) / 60000);
+    return { ok: true, blocked: true, page, seen: 0, pages: 0, judged: await judgeOne(), sent: await sendOne(), wait: left };
+  }
+  let cookies = runtime.cookies;
+  if (!cookies || Date.now() - runtime.cookiesAt > 30 * 60 * 1000) {
+    const home = await requestAmazon("https://www.amazon.com.tr/", "", "https://www.amazon.com.tr/");
+    cookies = home.cookies;
+    await writeCookies(cookies);
+  }
+
+  async function coolDown(minutes: number, why: string): Promise<void> {
+    await setCooldown(Date.now() + minutes * 60_000);
+    await addLog("uyari", `Amazon kapıyı kapattı (${why}). ${minutes} dakika ara veriliyor, sonra devam.`);
+  }
 
   async function remember(items: ProductCard[]): Promise<number> {
     let count = 0;
@@ -237,6 +256,7 @@ export async function scanOnce(onlyRaw?: string) {
     let restart = false;
     if (!url) {
       page = 1;
+      let lastError = "";
       for (const candidate of aisleStartUrls(aisle.label)) {
         if (Date.now() - started > 15_000) break;
         try {
@@ -245,11 +265,14 @@ export async function scanOnce(onlyRaw?: string) {
           if (isBlocked(trial.html) || parseSearchPage(trial.html).length === 0) continue;
           url = candidate;
           break;
-        } catch {
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : "açılmadı";
           continue;
         }
       }
-      if (!url) {
+      if (!url && /Amazon 5\d\d/.test(lastError)) {
+        await coolDown(10, lastError);
+      } else if (!url) {
         await addLog("uyari", `Reyon · ${aisle.label} şu an açılmıyor. Sıradaki reyon.`);
       } else {
         await addLog("bilgi", `Reyon · ${aisle.label} baştan açıldı.`);
@@ -294,7 +317,8 @@ export async function scanOnce(onlyRaw?: string) {
         url = more;
       } catch (error) {
         const message = error instanceof Error ? error.message : "açılmadı";
-        await addLog("uyari", `Reyon · ${aisle.label} açılmadı: ${message}`);
+        if (/Amazon 5\d\d/.test(message)) await coolDown(10, message);
+        else await addLog("uyari", `Reyon · ${aisle.label} açılmadı: ${message}`);
         break;
       }
     }
@@ -319,7 +343,9 @@ export async function scanOnce(onlyRaw?: string) {
       cookies = loaded.cookies;
     } catch (error) {
       const message = error instanceof Error ? error.message : "sayfa açılmadı";
-      await addLog("hata", `Amazon Depo "${label}" açılmadı: ${message}`);
+      if (/Amazon 5\d\d/.test(message)) await coolDown(10, message);
+      else await addLog("hata", `Amazon Depo "${label}" açılmadı: ${message}`);
+      await writeCookies("");
       await writeState(page, queryIndex, "Amazon sayfası açılmadı", nextUrl, pinned);
       return { ok: false, blocked: true, page, seen, pages, judged: 0, sent: 0 };
     }
@@ -393,6 +419,7 @@ export async function scanOnce(onlyRaw?: string) {
 
   const judged = await judgeOne();
   const sent = await sendOne();
+  await writeCookies(cookies);
   await writeState(page, queryIndex, null, nextUrl, pinned);
   await addLog("bilgi", `Tur bitti. "${label}" sayfa ${page}. Bu çağrıda ${pages} sayfa, ${seen} ürün. Kategori bitene kadar devam eder.`);
   return { ok: true, blocked: false, page, seen, pages, judged, sent };
