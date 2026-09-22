@@ -217,7 +217,7 @@ export async function scanOnce(onlyRaw?: string) {
     const aisle = DEPO_AISLES[aisleIndex];
     const seenHere = new Set<string>();
     let steps = 0;
-    let url = aisleUrl;
+    let url: string | null = aisleUrl;
     if (!url) {
       try {
         const opened = await fetchAmazon(DEPO_HOME, cookies);
@@ -252,7 +252,7 @@ export async function scanOnce(onlyRaw?: string) {
         const deals = parseSearchPage(loaded.html);
         const fresh = deals.filter((item) => !seenHere.has(item.asin));
         fresh.forEach((item) => seenHere.add(item.asin));
-        const more = scrollMoreUrl(loaded.html, url) || (fresh.length > 0 ? nextSearchPage(url) : null);
+        const more: string | null = scrollMoreUrl(loaded.html, url) || (fresh.length > 0 ? nextSearchPage(url) : null);
         if (deals.length > 0 && fresh.length === 0) {
           await addLog("bilgi", `Reyon · ${aisle.label} aşağısı bitti. Sıradaki reyon.`);
           aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
