@@ -1,4 +1,4 @@
-import { DEPO_AISLES, DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_HOME, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, keywordAisleUrl, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
@@ -212,27 +212,66 @@ export async function scanOnce(onlyRaw?: string) {
 
   let aisleIndex = state.aisleIndex % DEPO_AISLES.length;
   let aislePage = state.aislePage;
-  let aisleUrl = state.aisleUrl;
+  let aisleUrl = keywordAisleUrl(state.aisleUrl) ? null : state.aisleUrl;
   if (!manual) {
     const aisle = DEPO_AISLES[aisleIndex];
     const seenHere = new Set<string>();
     let steps = 0;
-    let url = aisleUrl || depoSearchUrl(aisle.query, aislePage);
-    while (Date.now() - started < 25_000 && steps < 8) {
+    let url = aisleUrl;
+    if (!url) {
+      try {
+        const opened = await fetchAmazon(DEPO_HOME, cookies);
+        cookies = opened.cookies;
+        url = isBlocked(opened.html) ? null : aisleEntryUrl(opened.html, aisle.match);
+        if (!url) {
+          const landing = await fetchAmazon("https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals", cookies);
+          cookies = landing.cookies;
+          url = isBlocked(landing.html) ? null : aisleEntryUrl(landing.html, aisle.match);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "açılmadı";
+        await addLog("uyari", `Reyon · ${aisle.label} açılmadı: ${message}`);
+      }
+      if (!url) {
+        await addLog("uyari", `Reyon · ${aisle.label} Depo sayfasında link olarak çıkmadı. Sıradaki reyon.`);
+        aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
+        aislePage = 1;
+        aisleUrl = null;
+      } else {
+        await addLog("bilgi", `Reyon · ${aisle.label} açıldı.`);
+        aisleUrl = url;
+        aislePage = 1;
+      }
+    }
+    while (url && Date.now() - started < 20_000 && steps < 6) {
       try {
         const loaded = await fetchAmazon(url, cookies);
         cookies = loaded.cookies;
         if (isBlocked(loaded.html)) {
-          await addLog("uyari", `${aisle.label} açılmadı. ${loaded.detail}`);
+          await addLog("uyari", `Reyon · ${aisle.label} açılmadı. ${loaded.detail}`);
           break;
         }
         const deals = parseSearchPage(loaded.html);
         const fresh = deals.filter((item) => !seenHere.has(item.asin));
         fresh.forEach((item) => seenHere.add(item.asin));
-        const more = scrollMoreUrl(loaded.html, url)
-          || (fresh.length >= 8 ? (nextSearchPage(url) || depoSearchUrl(aisle.query, aislePage + 1)) : null);
-        if ((deals.length > 0 && fresh.length === 0) || (!deals.length && !more)) {
-          await addLog("bilgi", `${aisle.label} aşağısı bitti. Sıradaki reyon.`);
+        const more = scrollMoreUrl(loaded.html, url) || (fresh.length > 0 ? nextSearchPage(url) : null);
+        if (deals.length > 0 && fresh.length === 0) {
+          await addLog("bilgi", `Reyon · ${aisle.label} aşağısı bitti. Sıradaki reyon.`);
+          aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
+          aislePage = 1;
+          aisleUrl = null;
+          break;
+        }
+        if (!deals.length) {
+          const deeper = aisleEntryUrl(loaded.html, aisle.match);
+          if (deeper && deeper !== url) {
+            await addLog("bilgi", `Reyon · ${aisle.label} içine giriliyor.`);
+            url = deeper;
+            aisleUrl = deeper;
+            steps += 1;
+            continue;
+          }
+          await addLog("uyari", `Reyon · ${aisle.label} sayfasında ürün kartı yok. Sıradaki reyon.`);
           aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
           aislePage = 1;
           aisleUrl = null;
@@ -241,21 +280,27 @@ export async function scanOnce(onlyRaw?: string) {
         seen += await remember(fresh);
         steps += 1;
         if (!more) {
-          await addLog("bilgi", `${aisle.label} aşağısı bitti. Sıradaki reyon.`);
+          await addLog("bilgi", `Reyon · ${aisle.label} aşağısı bitti. Sıradaki reyon.`);
           aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
           aislePage = 1;
           aisleUrl = null;
           break;
         }
-        await addLog("bilgi", `${aisle.label}: ${fresh.length} ürün. Aşağı iniliyor.`);
+        await addLog("bilgi", `Reyon · ${aisle.label}: ${fresh.length} ürün. Aşağı iniliyor.`);
         aislePage += 1;
         aisleUrl = more;
         url = more;
       } catch (error) {
         const message = error instanceof Error ? error.message : "açılmadı";
-        await addLog("uyari", `${aisle.label} açılmadı: ${message}`);
+        await addLog("uyari", `Reyon · ${aisle.label} açılmadı: ${message}`);
         break;
       }
+    }
+    if (steps > 0 && seenHere.size === 0 && aisleUrl) {
+      await addLog("uyari", `Reyon · ${aisle.label} sayfasında ürün kartı yok. Sıradaki reyon.`);
+      aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
+      aislePage = 1;
+      aisleUrl = null;
     }
     await writeAisle(aisleIndex, aislePage, aisleUrl);
   }

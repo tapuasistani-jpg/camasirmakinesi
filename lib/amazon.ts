@@ -36,11 +36,68 @@ export function depoSearchUrl(query: string, page: number): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
+export const DEPO_HOME = "https://www.amazon.com.tr/b?node=44219324031";
+
 export const DEPO_AISLES = [
-  { label: "Günün Fırsatları", query: "Günün Fırsatları" },
-  { label: "Çok Al Az Öde", query: "Çok Al Az Öde" },
-  { label: "Outlet", query: "Outlet" },
+  { label: "Günün Fırsatları", match: /günün fırsat/i },
+  { label: "Çok Al Az Öde", match: /çok al.{0,12}az öde/i },
+  { label: "Outlet", match: /outlet reyonu|\boutlet\b/i },
 ];
+
+export function keywordAisleUrl(url: string | null): boolean {
+  if (!url) return false;
+  try {
+    const params = new URL(url).searchParams;
+    const k = (params.get("k") || "").trim();
+    return /^(günün fırsatları|çok al az öde|outlet)$/i.test(k) && !params.get("rh");
+  } catch {
+    return false;
+  }
+}
+
+function depoScoped(url: string): boolean {
+  return /warehouse-deals|44219324031|A215JX4S9CANSO|amazon-depo|amazondepo/i.test(url);
+}
+
+function sitewideDeals(url: string): boolean {
+  try {
+    const path = new URL(url).pathname;
+    if (path === "/deals" || path.startsWith("/gp/goldbox") || path.startsWith("/events/")) return !depoScoped(url);
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+export function aisleEntryUrl(html: string, match: RegExp): string | null {
+  const $ = cheerio.load(html);
+  let found: string | null = null;
+  $("a[href]").each((_, element) => {
+    if (found) return;
+    const node = $(element);
+    const text = `${node.attr("aria-label") || ""} ${node.text()}`.replace(/\s+/g, " ").trim();
+    if (!text || text.length > 80 || !match.test(text)) return;
+    const url = amazonUrl(node.attr("href") || "");
+    if (!url || sitewideDeals(url) || !depoScoped(url)) return;
+    found = url;
+  });
+  if (found) return found;
+  const source = html.replace(/\\u0026/g, "&").replace(/\\\//g, "/").replace(/&amp;/g, "&");
+  const flags = match.flags.includes("g") ? match.flags : `${match.flags}g`;
+  const re = new RegExp(match.source, flags);
+  let hit: RegExpExecArray | null;
+  while ((hit = re.exec(source))) {
+    const window = source.slice(Math.max(0, hit.index - 1800), Math.min(source.length, hit.index + 1800));
+    const hrefs = window.match(/https?:\/\/www\.amazon\.com\.tr[^"'\\\s<>]+|\/(?:s|b|gp)[^"'\\\s<>]+/g) || [];
+    for (const href of hrefs) {
+      const url = amazonUrl(href);
+      if (!url || sitewideDeals(url) || !depoScoped(url)) continue;
+      return url;
+    }
+    if (hit.index === re.lastIndex) re.lastIndex += 1;
+  }
+  return null;
+}
 
 const ELEKTRONIK_NODE = "12466496031";
 
@@ -491,6 +548,15 @@ export function assertAmazonParser(): void {
   if (cableItems.length !== 1 || cableItems[0].listPrice !== null) throw new Error("metre fiyatı indirim sanıldı");
   if (!fakeListPrice("S-link Şarj Kablosu 20cm", 300, 1500)) throw new Error("20 cm metre hesabı kaçtı");
   if (!fakeListPrice("Bosch Disk 350 Mm", 3669, 366900)) throw new Error("100 kat fiyat kaçtı");
+  const aisleHtml = `
+    <a href="/gp/goldbox">Günün Fırsatları</a>
+    <a href="/s?i=warehouse-deals&rh=n:44219324031&ref=depo_firsat">Günün Fırsatları</a>
+    <a href="/deals">Çok Al Az Öde</a>
+  `;
+  const aisle = aisleEntryUrl(aisleHtml, /günün fırsat/i);
+  if (!aisle?.includes("warehouse-deals") || !aisle.includes("44219324031")) throw new Error("reyon linki kaçtı");
+  if (aisleEntryUrl(aisleHtml, /çok al.{0,12}az öde/i) !== null) throw new Error("site geneli fırsat reyon sandı");
+  if (!keywordAisleUrl("https://www.amazon.com.tr/s?k=Outlet&i=warehouse-deals&page=1")) throw new Error("eski reyon araması duruyor");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");

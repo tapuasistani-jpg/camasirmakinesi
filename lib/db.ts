@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 
-import { DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
@@ -338,6 +338,8 @@ function blankStatus(message: string): Status {
     message,
     page: 1,
     search: "Amazon Depo · boş arama",
+    aisle: DEPO_AISLES[0].label,
+    aislePage: 1,
     productCount: 0,
     dealCount: 0,
     lastScanAt: null,
@@ -387,12 +389,15 @@ export async function getStatus(): Promise<Status> {
   const deals = (await sql`SELECT COUNT(*)::int AS n FROM alerts WHERE verdict = 'evet'`) as Row[];
   const alerts = (await sql`SELECT * FROM alerts ORDER BY id DESC LIMIT 40`) as Row[];
   const recent = (await sql`SELECT asin, title, url, image, last_price, list_price FROM products ORDER BY last_seen DESC LIMIT 8`) as Row[];
-  const logs = (await sql`SELECT level, message, created_at FROM scan_log ORDER BY id DESC LIMIT 25`) as Row[];
+  const logs = (await sql`SELECT level, message, created_at FROM scan_log ORDER BY id DESC LIMIT 40`) as Row[];
+  const aisle = DEPO_AISLES[state.aisleIndex % DEPO_AISLES.length] ?? DEPO_AISLES[0];
   return {
     ready: true,
     message: "",
     page: state.page,
     search: `Amazon Depo · ${depoQueryLabel(query)}`,
+    aisle: aisle.label,
+    aislePage: state.aislePage,
     productCount: num(products[0]?.n) ?? 0,
     dealCount: num(deals[0]?.n) ?? 0,
     lastScanAt: state.lastScanAt,

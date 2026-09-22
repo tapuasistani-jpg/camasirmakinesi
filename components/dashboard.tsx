@@ -39,6 +39,10 @@ function when(value: string | null | undefined): string {
   return date.toLocaleString("tr-TR");
 }
 
+function reyonLine(message: string): boolean {
+  return message.startsWith("Reyon") || /^(Günün Fırsatları|Çok Al Az Öde|Outlet)\b/.test(message);
+}
+
 function Photo({ src }: { src: string | null }) {
   if (!src || !src.startsWith("https://")) return <span className="ph" />;
   return <img alt="" src={src} />;
@@ -60,6 +64,7 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState("Elektronik");
   const [customCategory, setCustomCategory] = useState("");
+  const [screen, setScreen] = useState<"depo" | "reyon">("depo");
   const [lookup, setLookup] = useState("");
   const [looking, setLooking] = useState(false);
   const [offers, setOffers] = useState<{ shop: string; title: string; url: string; price: number }[]>([]);
@@ -256,6 +261,11 @@ export default function Dashboard() {
         <span className="pill">{fresh ? "tarıyor" : "durdu"}</span>
       </header>
 
+      <nav className="tabs">
+        <button type="button" className={screen === "depo" ? "on" : ""} onClick={() => setScreen("depo")}>Depo turu</button>
+        <button type="button" className={screen === "reyon" ? "on" : ""} onClick={() => setScreen("reyon")}>Reyonlar</button>
+      </nav>
+
       {status && !status.ready ? <p className="banner">{status.message}</p> : null}
 
       <section className="stats">
@@ -265,7 +275,7 @@ export default function Dashboard() {
         <div className="stat"><span>Son tarama</span><b style={{ fontSize: 16 }}>{when(status?.lastScanAt)}</b></div>
       </section>
 
-      <section className="panel lookup">
+      {screen === "depo" ? <><section className="panel lookup">
         <h2>En ucuz nerede</h2>
         <p className="hint">Ürün adını yaz. Depo taramasından ayrıdır. Basınca Türkiye’de satış yapan sitelere bakar, en ucuzu üste gelir.</p>
         <form onSubmit={compare}>
@@ -371,17 +381,38 @@ export default function Dashboard() {
             )) : <p className="empty">Henüz ürün yok.</p>}
           </section>
         </aside>
-      </main>
+      </main></> : null}
 
-      <section className="panel log-panel">
-        <h2>Günlük</h2>
-        <ol className="log">
-          {status?.lastError ? <li>{status.lastError}</li> : null}
-          {status?.logs.map((line, index) => (
-            <li key={`${line.createdAt}-${index}`}>{when(line.createdAt)} — {line.message}</li>
-          ))}
-        </ol>
-      </section>
+      {screen === "reyon" ? (
+        <section className="panel log-panel">
+          <h2>Reyonlar</h2>
+          <p className="hint">Günün Fırsatları, Çok Al Az Öde ve Outlet, Depo sayfasının içinden açılır. Kategori turundan ayrıdır. Aşağı inildikçe yeni ürünler okunur.</p>
+          <div className="reyon-list">
+            {["Günün Fırsatları", "Çok Al Az Öde", "Outlet"].map((name) => (
+              <div key={name} className={status?.aisle === name ? "now" : ""}>
+                <b>{name}</b>
+                <span>{status?.aisle === name ? `şimdi · sayfa ${status.aislePage}` : "sırada"}</span>
+              </div>
+            ))}
+          </div>
+          <ol className="log">
+            {(status?.logs ?? []).filter((line) => reyonLine(line.message)).map((line, index) => (
+              <li key={`${line.createdAt}-${index}`}>{when(line.createdAt)} — {line.message.replace(/^Reyon · /, "")}</li>
+            ))}
+          </ol>
+          {(status?.logs ?? []).some((line) => reyonLine(line.message)) ? null : <p className="empty">Reyon günlüğü bir sonraki taramada dolacak.</p>}
+        </section>
+      ) : (
+        <section className="panel log-panel">
+          <h2>Günlük</h2>
+          <ol className="log">
+            {status?.lastError ? <li>{status.lastError}</li> : null}
+            {(status?.logs ?? []).filter((line) => !reyonLine(line.message)).map((line, index) => (
+              <li key={`${line.createdAt}-${index}`}>{when(line.createdAt)} — {line.message}</li>
+            ))}
+          </ol>
+        </section>
+      )}
     </>
   );
 }

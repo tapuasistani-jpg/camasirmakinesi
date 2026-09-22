@@ -33,6 +33,8 @@ export type Status = {
   message: string;
   page: number;
   search: string;
+  aisle: string;
+  aislePage: number;
   productCount: number;
   dealCount: number;
   lastScanAt: string | null;
