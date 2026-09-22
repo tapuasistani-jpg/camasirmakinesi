@@ -88,7 +88,7 @@ async function fetchAmazon(url: string, cookies: string): Promise<{ html: string
   return { html: page.html, detail: pageSummary(page.html), cookies: page.cookies };
 }
 
-async function judgeOne(): Promise<number> {
+export async function judgeOne(): Promise<number> {
   const pending = await takePending();
   if (!pending) return 0;
   const asin = String(pending.asin);
@@ -154,7 +154,7 @@ async function judgeOne(): Promise<number> {
   return 1;
 }
 
-async function sendOne(): Promise<number> {
+export async function sendOne(): Promise<number> {
   const config = await getConfig();
   const alert = await nextUnsent();
   if (!alert) return 0;

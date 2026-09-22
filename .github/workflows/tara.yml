@@ -28,16 +28,51 @@ jobs:
             exit 1
           fi
           base="${SCAN_URL%/}"
+          auth="Authorization: Bearer $CRON_SECRET"
+          agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
           deadline=$((SECONDS + 200 * 60))
+
+          # Amazon çerezini bir kez al, sonra hep aynı oturumla gez.
+          curl -sS -m 30 -c jar.txt -A "$agent" \
+            -H "Accept-Language: tr-TR,tr;q=0.9" \
+            "https://www.amazon.com.tr/" -o /dev/null || true
+
+          target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next")
           while [ $SECONDS -lt $deadline ]; do
-            body=$(curl -sS -m 58 -H "Authorization: Bearer $CRON_SECRET" "$base/api/cron/scan" || true)
-            echo "$body"
-            if echo "$body" | grep -q '"blocked":true'; then
-              echo "Amazon ara verdi, 5 dakika sonra devam."
-              sleep 300
+            url=$(echo "$target" | jq -r '.url // empty')
+            kind=$(echo "$target" | jq -r '.kind // "tur"')
+            label=$(echo "$target" | jq -r '.label // ""')
+            if [ -z "$url" ]; then
+              echo "Sıradaki adres gelmedi: $target"
+              sleep 60
+              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next")
               continue
             fi
-            sleep 30
+            echo "$kind · $label · $url"
+            code=$(curl -sS -m 45 -b jar.txt -c jar.txt -A "$agent" \
+              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+              -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
+              -H "Upgrade-Insecure-Requests: 1" \
+              -H "Referer: https://www.amazon.com.tr/" \
+              -w '%{http_code}' -o sayfa.html "$url" || echo "000")
+            if [ "$code" != "200" ]; then
+              echo "Amazon $code verdi, 3 dakika bekleniyor."
+              sleep 180
+              continue
+            fi
+            jq -n --arg url "$url" --arg kind "$kind" --rawfile html sayfa.html \
+              '{url:$url,kind:$kind,html:$html}' > gonder.json
+            cevap=$(curl -sS -m 55 -X POST -H "$auth" -H 'Content-Type: application/json' \
+              --data @gonder.json "$base/api/cron/feed")
+            echo "$cevap" | head -c 400
+            echo
+            yeni=$(echo "$cevap" | jq -c '.next // empty')
+            if [ -n "$yeni" ]; then
+              target="$yeni"
+            else
+              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next")
+            fi
+            sleep 8
           done
           curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \

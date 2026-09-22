@@ -138,6 +138,15 @@ export async function writeCookies(cookies: string): Promise<void> {
   await putSetting("amazon_cookies_at", String(Date.now()));
 }
 
+export async function readSetting(key: string): Promise<string> {
+  const map = await settingsMap();
+  return map[key] || "";
+}
+
+export async function writeSetting(key: string, value: string): Promise<void> {
+  await putSetting(key, value.slice(0, 4000));
+}
+
 export async function setCooldown(untilMs: number): Promise<void> {
   await putSetting("cool_until", String(Math.round(untilMs)));
 }
