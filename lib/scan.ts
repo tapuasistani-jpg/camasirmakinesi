@@ -65,13 +65,23 @@ async function requestAmazon(url: string, cookies: string, referer: string): Pro
   return { html, status: response.status, cookies: mergeCookies(cookies, response) };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Amazon peş peşe isteklerde 503 veriyor. Biraz bekleyip yeniden soruyoruz.
 async function fetchAmazon(url: string, cookies: string): Promise<{ html: string; detail: string; cookies: string }> {
   let page = await requestAmazon(url, cookies, "https://www.amazon.com.tr/");
+  for (let tries = 0; page.status >= 500 && tries < 2; tries += 1) {
+    await sleep(1500 + tries * 2500);
+    page = await requestAmazon(url, page.cookies, "https://www.amazon.com.tr/");
+  }
   if (page.status >= 400 || isBlocked(page.html)) {
     const gate = continueTarget(page.html);
     if (gate.url && !gate.captcha) page = await requestAmazon(gate.url, page.cookies, url);
   }
   if (page.status >= 400 && !page.html.includes("data-asin=")) throw new Error(`Amazon ${page.status}`);
+  await sleep(700);
   return { html: page.html, detail: pageSummary(page.html), cookies: page.cookies };
 }
 
@@ -245,7 +255,7 @@ export async function scanOnce(onlyRaw?: string) {
         await addLog("bilgi", `Reyon · ${aisle.label} baştan açıldı.`);
       }
     }
-    while (url && Date.now() - started < 18_000 && steps < 5) {
+    while (url && Date.now() - started < 18_000 && steps < 3) {
       try {
         const loaded = await fetchAmazon(url, cookies);
         cookies = loaded.cookies;
@@ -292,7 +302,7 @@ export async function scanOnce(onlyRaw?: string) {
     await writeAisle((aisleIndex + 1) % DEPO_AISLES.length, page, null);
   }
 
-  while (Date.now() - started < TIME_BUDGET_MS && pages < 10) {
+  while (Date.now() - started < TIME_BUDGET_MS && pages < 6) {
     const query = pinned || (DEPO_QUERIES[queryIndex] ?? "");
     label = depoQueryLabel(query);
     const flip = /elektronik/i.test(query);

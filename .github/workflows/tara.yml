@@ -33,11 +33,11 @@ jobs:
             body=$(curl -sS -m 58 -H "Authorization: Bearer $CRON_SECRET" "$base/api/cron/scan" || true)
             echo "$body"
             if echo "$body" | grep -q '"blocked":true'; then
-              echo "Amazon ara verdi, 2 dakika sonra devam."
-              sleep 120
+              echo "Amazon ara verdi, 5 dakika sonra devam."
+              sleep 300
               continue
             fi
-            sleep 5
+            sleep 30
           done
           curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
