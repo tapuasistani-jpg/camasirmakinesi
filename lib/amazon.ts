@@ -55,12 +55,14 @@ const AISLE_START: Record<string, string[]> = {
     "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=price-asc-rank&page=1",
   ],
   "Çok Al Az Öde": [
+    "https://www.amazon.com.tr/s?rh=n%3A26248552031&fs=true&page=1",
     "https://www.amazon.com.tr/s?node=26248552031&page=1",
-    "https://www.amazon.com.tr/s?rh=n%3A26248552031&page=1",
+    "https://www.amazon.com.tr/b?node=26248552031",
   ],
   Outlet: [
+    "https://www.amazon.com.tr/s?rh=n%3A21034466031&fs=true&page=1",
     "https://www.amazon.com.tr/s?node=21034466031&page=1",
-    "https://www.amazon.com.tr/s?rh=n%3A21034466031&page=1",
+    "https://www.amazon.com.tr/b?node=21034466031",
   ],
 };
 
@@ -82,6 +84,36 @@ export function keywordAisleUrl(url: string | null): boolean {
     return params.get("i") === "warehouse-deals" && (params.get("rh") || "").includes("p_n_deal_type");
   } catch {
     return false;
+  }
+}
+
+export function nodeFromUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const direct = parsed.searchParams.get("node");
+    if (direct && /^\d+$/.test(direct)) return direct;
+    const refined = (parsed.searchParams.get("rh") || "").match(/n(?:%3A|:)(\d+)/i);
+    return refined ? refined[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Vitrin sayfasındaki, aynı reyonun ürün listesine giden bağlantı.
+export function nodeListingUrl(html: string, node: string): string | null {
+  const source = html.replace(/&amp;/g, "&").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+  const pattern = new RegExp(`(?:https://www\\.amazon\\.com\\.tr)?/s\\?[^"'\\\\\\s<>]*(?:node=${node}|n(?:%3A|:)${node})[^"'\\\\\\s<>]*`, "i");
+  const hit = source.match(pattern);
+  if (!hit) return null;
+  const url = amazonUrl(hit[0]);
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("qid");
+    parsed.searchParams.set("page", "1");
+    return parsed.toString();
+  } catch {
+    return url;
   }
 }
 
@@ -593,6 +625,10 @@ export function assertAmazonParser(): void {
   if (!aisleStartUrl("Günün Fırsatları").includes("p_n_deal_type")) throw new Error("fırsat filtresi kaçtı");
   if (!aisleStartUrl("Yeni Gelenler").includes("s=date-desc-rank")) throw new Error("yeni gelenler sıralaması kaçtı");
   if (aisleStartUrls("Günün Fırsatları").length < 2) throw new Error("fırsat reyonunun yedek adresi yok");
+  if (nodeFromUrl("https://www.amazon.com.tr/s?rh=n%3A21034466031&fs=true") !== "21034466031") throw new Error("reyon numarası okunamadı");
+  const store = `<a href="/b?node=21034466031">Outlet</a><a href="/s?i=specialty-aps&amp;rh=n%3A21034466031&amp;qid=17">Tümü</a>`;
+  const listing = nodeListingUrl(store, "21034466031");
+  if (!listing?.includes("rh=n%3A21034466031") || !listing.includes("page=1")) throw new Error("vitrinden listeye geçilemedi");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");

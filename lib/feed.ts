@@ -1,6 +1,7 @@
 import {
   DEPO_AISLES,
   DEPO_QUERIES,
+  aisleEntryUrl,
   aisleStartUrls,
   continueResultsUrl,
   depoQueryLabel,
@@ -9,10 +10,13 @@ import {
   isBlocked,
   keywordAisleUrl,
   nextSearchPage,
+  nodeFromUrl,
+  nodeListingUrl,
   pageFlipUrl,
   pageSummary,
   parseSearchPage,
   scrollMoreUrl,
+  seeAllResultsUrl,
 } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import {
@@ -147,9 +151,20 @@ async function eatAisle(url: string, html: string, items: ProductCard[]): Promis
   }
 
   if (!items.length) {
+    // Mağaza sayfasında kart yoksa "Tüm sonuçları gör" listesine geç.
+    const node = nodeFromUrl(url);
+    const deeper = seeAllResultsUrl(html)
+      || (node ? nodeListingUrl(html, node) : null)
+      || aisleEntryUrl(html, aisle.match);
+    if (deeper && deeper !== url) {
+      await addLog("bilgi", `Reyon · ${aisle.label} ürün listesine giriliyor.`);
+      await writeAisleCursor(aisle.label, { page: 1, url: deeper });
+      await writeAisle((index + 1) % DEPO_AISLES.length, 1, null);
+      return;
+    }
     const tries = (Number(await readSetting(tryKey)) || 0) + 1;
     await writeSetting(tryKey, String(tries % aisleStartUrls(aisle.label).length));
-    await addLog("uyari", `Reyon · ${aisle.label} sayfa ${page}: ürün kartı yok. Başka adres denenecek.`);
+    await addLog("uyari", `Reyon · ${aisle.label} sayfa ${page}: ürün kartı yok. ${pageSummary(html)} Başka adres denenecek.`);
     await nextAisle();
     return;
   }
