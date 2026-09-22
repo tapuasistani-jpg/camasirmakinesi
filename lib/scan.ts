@@ -1,4 +1,5 @@
-import { DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, seeAllResultsUrl } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_QUERIES, USER_AGENT, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, seeAllResultsUrl } from "@/lib/amazon";
+import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
@@ -194,6 +195,46 @@ export async function scanOnce(onlyRaw?: string) {
   const home = await requestAmazon("https://www.amazon.com.tr/", "", "https://www.amazon.com.tr/");
   let cookies = home.cookies;
 
+  async function remember(items: ProductCard[]): Promise<number> {
+    let count = 0;
+    for (const item of items) {
+      const memory = await upsertProduct(item);
+      count += 1;
+      const listOff = percentOff(item.price, item.listPrice);
+      const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.highest) : 0;
+      if (Math.max(listOff, memoryOff) < config.minDiscount) continue;
+      if (!(await needsFreshVerdict(item.asin, item.price))) continue;
+      await enqueuePending(item, memory);
+    }
+    return count;
+  }
+
+  if (!manual) {
+    for (const aisle of DEPO_AISLES) {
+      if (Date.now() - started >= TIME_BUDGET_MS) break;
+      try {
+        let loaded = await fetchAmazon(depoSearchUrl(aisle.query, 1), cookies);
+        cookies = loaded.cookies;
+        if (isBlocked(loaded.html)) {
+          await addLog("uyari", `${aisle.label} açılmadı. ${loaded.detail}`);
+          continue;
+        }
+        let deals = parseSearchPage(loaded.html);
+        const more = seeAllResultsUrl(loaded.html);
+        if (deals.length < 8 && more) {
+          loaded = await fetchAmazon(more, cookies);
+          cookies = loaded.cookies;
+          if (!isBlocked(loaded.html)) deals = parseSearchPage(loaded.html);
+        }
+        seen += await remember(deals);
+        await addLog("bilgi", `${aisle.label}: ${deals.length} ürün.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "açılmadı";
+        await addLog("uyari", `${aisle.label} açılmadı: ${message}`);
+      }
+    }
+  }
+
   while (Date.now() - started < TIME_BUDGET_MS && pages < 10) {
     const query = pinned || (DEPO_QUERIES[queryIndex] ?? "");
     label = depoQueryLabel(query);
@@ -263,15 +304,7 @@ export async function scanOnce(onlyRaw?: string) {
       pages += 1;
       continue;
     }
-    for (const item of fresh) {
-      const memory = await upsertProduct(item);
-      seen += 1;
-      const listOff = percentOff(item.price, item.listPrice);
-      const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.highest) : 0;
-      if (Math.max(listOff, memoryOff) < config.minDiscount) continue;
-      if (!(await needsFreshVerdict(item.asin, item.price))) continue;
-      await enqueuePending(item, memory);
-    }
+    seen += await remember(fresh);
     pages += 1;
     if (more && page < PAGE_CAP) {
       const turned = generatedNext;

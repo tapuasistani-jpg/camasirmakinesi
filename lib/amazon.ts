@@ -36,6 +36,12 @@ export function depoSearchUrl(query: string, page: number): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
+export const DEPO_AISLES = [
+  { label: "Günün Fırsatları", query: "Günün Fırsatları" },
+  { label: "Çok Al Az Öde", query: "Çok Al Az Öde" },
+  { label: "Outlet", query: "Outlet" },
+];
+
 const ELEKTRONIK_NODE = "12466496031";
 
 export function pageTurnUrl(query: string, page: number): string {
