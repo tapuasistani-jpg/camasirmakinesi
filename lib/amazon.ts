@@ -54,14 +54,15 @@ const AISLE_START: Record<string, string[]> = {
     "https://www.amazon.com.tr/s?i=specialty-aps&rh=p_n_deal_type%3A26902947031&page=1",
     "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=price-asc-rank&page=1",
   ],
+  // srs olmadan mağaza reyonu boş "Tüm Kategoriler" sayfası veriyor.
   "Çok Al Az Öde": [
-    "https://www.amazon.com.tr/s?rh=n%3A26248552031&fs=true&page=1",
-    "https://www.amazon.com.tr/s?node=26248552031&page=1",
+    "https://www.amazon.com.tr/s?rh=n%3A26248552031&srs=26248552031&page=1",
+    "https://www.amazon.com.tr/s?srs=26248552031&page=1",
     "https://www.amazon.com.tr/b?node=26248552031",
   ],
   Outlet: [
-    "https://www.amazon.com.tr/s?rh=n%3A21034466031&fs=true&page=1",
-    "https://www.amazon.com.tr/s?node=21034466031&page=1",
+    "https://www.amazon.com.tr/s?rh=n%3A21034466031&srs=21034466031&page=1",
+    "https://www.amazon.com.tr/s?srs=21034466031&page=1",
     "https://www.amazon.com.tr/b?node=21034466031",
   ],
 };
@@ -620,8 +621,8 @@ export function assertAmazonParser(): void {
   }
   if (!keywordAisleUrl("https://www.amazon.com.tr/s?k=Outlet&i=warehouse-deals&page=1")) throw new Error("eski reyon araması duruyor");
   if (keywordAisleUrl("https://www.amazon.com.tr/s?node=21034466031&page=1")) throw new Error("yeni reyon adresi silindi");
-  if (!aisleStartUrl("Outlet").includes("node=21034466031")) throw new Error("outlet adresi bozuk");
-  if (!aisleStartUrl("Çok Al Az Öde").includes("node=26248552031")) throw new Error("çok al az öde adresi bozuk");
+  if (!aisleStartUrl("Outlet").includes("srs=21034466031")) throw new Error("outlet adresi bozuk");
+  if (!aisleStartUrl("Çok Al Az Öde").includes("srs=26248552031")) throw new Error("çok al az öde adresi bozuk");
   if (!aisleStartUrl("Günün Fırsatları").includes("p_n_deal_type")) throw new Error("fırsat filtresi kaçtı");
   if (!aisleStartUrl("Yeni Gelenler").includes("s=date-desc-rank")) throw new Error("yeni gelenler sıralaması kaçtı");
   if (aisleStartUrls("Günün Fırsatları").length < 2) throw new Error("fırsat reyonunun yedek adresi yok");
