@@ -1,4 +1,4 @@
-import { DEPO_AISLES, DEPO_HOME, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, aisleStartUrl, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, keywordAisleUrl, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, aisleStartUrl, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, keywordAisleUrl, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
@@ -219,27 +219,10 @@ export async function scanOnce(onlyRaw?: string) {
     let steps = 0;
     let url: string | null = aisleUrl;
     if (!url) {
-      try {
-        const opened = await fetchAmazon(DEPO_HOME, cookies);
-        cookies = opened.cookies;
-        url = isBlocked(opened.html) ? null : aisleEntryUrl(opened.html, aisle.match);
-        if (!url) {
-          const landing = await fetchAmazon("https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals", cookies);
-          cookies = landing.cookies;
-          url = isBlocked(landing.html) ? null : aisleEntryUrl(landing.html, aisle.match);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "açılmadı";
-        await addLog("uyari", `Reyon · ${aisle.label} açılmadı: ${message}`);
-      }
-      if (!url) {
-        url = aisleStartUrl(aisle.label);
-        await addLog("bilgi", `Reyon · ${aisle.label} liste sayfasından açıldı.`);
-      } else {
-        await addLog("bilgi", `Reyon · ${aisle.label} açıldı.`);
-      }
+      url = aisleStartUrl(aisle.label);
       aisleUrl = url;
       aislePage = 1;
+      await addLog("bilgi", `Reyon · ${aisle.label} açıldı.`);
     }
     while (url && Date.now() - started < 20_000 && steps < 6) {
       try {

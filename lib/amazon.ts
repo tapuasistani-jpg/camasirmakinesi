@@ -45,40 +45,52 @@ export const DEPO_AISLES = [
   { label: "Outlet", match: /outlet reyonu|\boutlet\b/i },
 ];
 
+const AISLE_START: Record<string, string> = {
+  "Yeni Gelenler": "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=date-desc-rank&page=1",
+  "Günün Fırsatları": "https://www.amazon.com.tr/s?i=specialty-aps&rh=p_n_deal_type%3A26902947031&page=1",
+  "Çok Al Az Öde": "https://www.amazon.com.tr/s?node=26248552031&page=1",
+  Outlet: "https://www.amazon.com.tr/s?node=21034466031&page=1",
+};
+
+export function aisleStartUrl(label: string): string {
+  return AISLE_START[label] || AISLE_START["Yeni Gelenler"];
+}
+
+// Reyonların eski adresleri hafızada kalmasın.
 export function keywordAisleUrl(url: string | null): boolean {
   if (!url) return false;
   try {
     const params = new URL(url).searchParams;
     const k = (params.get("k") || "").trim();
-    return /^günün fırsatları$/i.test(k) && !params.get("rh");
+    if (/^(günün fırsatları|çok al az öde|outlet)$/i.test(k)) return true;
+    return params.get("i") === "warehouse-deals" && (params.get("rh") || "").includes("p_n_deal_type");
   } catch {
     return false;
   }
 }
 
-export function aisleStartUrl(label: string): string {
-  if (label === "Yeni Gelenler") {
-    return "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=date-desc-rank&page=1";
-  }
-  if (label === "Günün Fırsatları") {
-    return "https://www.amazon.com.tr/s?i=warehouse-deals&rh=p_n_deal_type%3A26902947031&fs=true";
-  }
-  if (label === "Çok Al Az Öde") return depoSearchUrl("Çok Al Az Öde", 1);
-  return depoSearchUrl("Outlet", 1);
-}
-
-function depoScoped(url: string): boolean {
-  return /warehouse-deals|44219324031|A215JX4S9CANSO|amazon-depo|amazondepo/i.test(url);
-}
-
-function sitewideDeals(url: string): boolean {
+export function storePageUrl(url: string): string | null {
+  let parsed: URL;
   try {
-    const path = new URL(url).pathname;
-    if (path === "/deals" || path.startsWith("/gp/goldbox") || path.startsWith("/events/")) return !depoScoped(url);
+    parsed = new URL(url);
   } catch {
-    return true;
+    return null;
   }
-  return false;
+  const node = parsed.searchParams.get("node");
+  if (!node || !/^\d+$/.test(node)) return null;
+  return `https://www.amazon.com.tr/s?node=${node}&page=1`;
+}
+
+// Ürün listesi veren adresler. /deals ve goldbox sayfası ham halde boş gelir.
+function listingUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (/^\/(deals|events)\//.test(`${parsed.pathname}/`) || parsed.pathname.startsWith("/gp/goldbox")) return false;
+    if (!parsed.pathname.startsWith("/s") && !parsed.pathname.startsWith("/b")) return false;
+    return Boolean(parsed.searchParams.get("node") || parsed.searchParams.get("k") || parsed.searchParams.get("rh") || parsed.searchParams.get("i"));
+  } catch {
+    return false;
+  }
 }
 
 export function aisleEntryUrl(html: string, match: RegExp): string | null {
@@ -90,25 +102,10 @@ export function aisleEntryUrl(html: string, match: RegExp): string | null {
     const text = `${node.attr("aria-label") || ""} ${node.text()}`.replace(/\s+/g, " ").trim();
     if (!text || text.length > 80 || !match.test(text)) return;
     const url = amazonUrl(node.attr("href") || "");
-    if (!url || sitewideDeals(url) || !depoScoped(url)) return;
-    found = url;
+    if (!url || !listingUrl(url)) return;
+    found = storePageUrl(url) || url;
   });
-  if (found) return found;
-  const source = html.replace(/\\u0026/g, "&").replace(/\\\//g, "/").replace(/&amp;/g, "&");
-  const flags = match.flags.includes("g") ? match.flags : `${match.flags}g`;
-  const re = new RegExp(match.source, flags);
-  let hit: RegExpExecArray | null;
-  while ((hit = re.exec(source))) {
-    const window = source.slice(Math.max(0, hit.index - 1800), Math.min(source.length, hit.index + 1800));
-    const hrefs = window.match(/https?:\/\/www\.amazon\.com\.tr[^"'\\\s<>]+|\/(?:s|b|gp)[^"'\\\s<>]+/g) || [];
-    for (const href of hrefs) {
-      const url = amazonUrl(href);
-      if (!url || sitewideDeals(url) || !depoScoped(url)) continue;
-      return url;
-    }
-    if (hit.index === re.lastIndex) re.lastIndex += 1;
-  }
-  return null;
+  return found;
 }
 
 const ELEKTRONIK_NODE = "12466496031";
@@ -562,17 +559,22 @@ export function assertAmazonParser(): void {
   if (!fakeListPrice("Bosch Disk 350 Mm", 3669, 366900)) throw new Error("100 kat fiyat kaçtı");
   const aisleHtml = `
     <a href="/gp/goldbox">Günün Fırsatları</a>
-    <a href="/s?i=warehouse-deals&rh=n:44219324031&ref=depo_firsat">Günün Fırsatları</a>
+    <a href="/b/?ie=UTF8&node=21034466031&ref_=sv_gb_3">Outlet</a>
     <a href="/deals">Çok Al Az Öde</a>
   `;
-  const aisle = aisleEntryUrl(aisleHtml, /günün fırsat/i);
-  if (!aisle?.includes("warehouse-deals") || !aisle.includes("44219324031")) throw new Error("reyon linki kaçtı");
-  if (aisleEntryUrl(aisleHtml, /çok al.{0,12}az öde/i) !== null) throw new Error("site geneli fırsat reyon sandı");
-  if (keywordAisleUrl("https://www.amazon.com.tr/s?k=Outlet&i=warehouse-deals&page=1")) throw new Error("outlet listesi silindi");
-  if (!keywordAisleUrl("https://www.amazon.com.tr/s?k=G%C3%BCn%C3%BCn%20F%C4%B1rsatlar%C4%B1&i=warehouse-deals&page=1")) throw new Error("boş fırsat araması duruyor");
-  if (!aisleStartUrl("Outlet").includes("k=Outlet") || !aisleStartUrl("Günün Fırsatları").includes("warehouse-deals")) {
-    throw new Error("reyon başlangıç adresi bozuk");
+  if (aisleEntryUrl(aisleHtml, /günün fırsat/i) !== null) throw new Error("boş fırsat sayfası reyon sandı");
+  if (aisleEntryUrl(aisleHtml, /çok al.{0,12}az öde/i) !== null) throw new Error("boş kampanya sayfası reyon sandı");
+  if (aisleEntryUrl(aisleHtml, /outlet/i) !== "https://www.amazon.com.tr/s?node=21034466031&page=1") {
+    throw new Error("mağaza sayfası listeye çevrilmedi");
   }
+  if (storePageUrl("https://www.amazon.com.tr/b/?ie=UTF8&node=26248552031&ref_=sv_gb_1") !== "https://www.amazon.com.tr/s?node=26248552031&page=1") {
+    throw new Error("node adresi okunamadı");
+  }
+  if (!keywordAisleUrl("https://www.amazon.com.tr/s?k=Outlet&i=warehouse-deals&page=1")) throw new Error("eski reyon araması duruyor");
+  if (keywordAisleUrl("https://www.amazon.com.tr/s?node=21034466031&page=1")) throw new Error("yeni reyon adresi silindi");
+  if (!aisleStartUrl("Outlet").includes("node=21034466031")) throw new Error("outlet adresi bozuk");
+  if (!aisleStartUrl("Çok Al Az Öde").includes("node=26248552031")) throw new Error("çok al az öde adresi bozuk");
+  if (!aisleStartUrl("Günün Fırsatları").includes("p_n_deal_type")) throw new Error("fırsat filtresi kaçtı");
   if (!aisleStartUrl("Yeni Gelenler").includes("s=date-desc-rank")) throw new Error("yeni gelenler sıralaması kaçtı");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
