@@ -179,6 +179,8 @@ input[type="text"], input[type="password"], input[type="number"], select {
 .reyon-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
 .reyon-list div { border: 2px solid var(--line); background: white; padding: 10px; display: grid; gap: 4px; }
 .reyon-list .now { background: #fff4c2; }
+.reyon-head { margin: 16px 0 0; font-size: 18px; }
+.reyon-items { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
 .reyon-list span { color: var(--muted); font-size: 14px; }
 
 .log-panel { margin: 14px auto 32px; }
@@ -187,7 +189,7 @@ input[type="text"], input[type="password"], input[type="number"], select {
 .empty { color: var(--muted); }
 
 @media (max-width: 860px) {
-  header, main, .stats, .lookup form, .reyon-list { display: grid; grid-template-columns: 1fr; }
+  header, main, .stats, .lookup form, .reyon-list, .reyon-items { display: grid; grid-template-columns: 1fr; }
   h1 { font-size: 32px; }
   .stats { grid-template-columns: 1fr 1fr; }
 }

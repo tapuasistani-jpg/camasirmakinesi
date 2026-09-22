@@ -102,6 +102,31 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS aisle_index INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS aisle_page INT NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS aisle_url TEXT`;
+  await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS aisle TEXT`;
+  await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS aisle_seen TIMESTAMPTZ`;
+}
+
+export type AisleCursor = { page: number; url: string | null };
+
+export async function readAisleCursors(): Promise<Record<string, AisleCursor>> {
+  const map = await settingsMap();
+  try {
+    const parsed = JSON.parse(map.aisle_cursor || "{}") as Record<string, AisleCursor>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function writeAisleCursor(label: string, cursor: AisleCursor): Promise<void> {
+  const all = await readAisleCursors();
+  all[label] = { page: cursor.page, url: cursor.url };
+  await putSetting("aisle_cursor", JSON.stringify(all).slice(0, 4000));
+}
+
+export async function tagAisle(asins: string[], label: string): Promise<void> {
+  if (!asins.length) return;
+  await db()`UPDATE products SET aisle = ${label}, aisle_seen = NOW() WHERE asin = ANY(${asins})`;
 }
 
 function num(value: unknown): number | null {
@@ -340,6 +365,8 @@ function blankStatus(message: string): Status {
     search: "Amazon Depo · boş arama",
     aisle: DEPO_AISLES[0].label,
     aislePage: 1,
+    aisles: DEPO_AISLES.map((row) => ({ label: row.label, page: 1, count: 0 })),
+    aisleItems: [],
     productCount: 0,
     dealCount: 0,
     lastScanAt: null,
@@ -391,13 +418,36 @@ export async function getStatus(): Promise<Status> {
   const recent = (await sql`SELECT asin, title, url, image, last_price, list_price FROM products ORDER BY last_seen DESC LIMIT 8`) as Row[];
   const logs = (await sql`SELECT level, message, created_at FROM scan_log ORDER BY id DESC LIMIT 40`) as Row[];
   const aisle = DEPO_AISLES[state.aisleIndex % DEPO_AISLES.length] ?? DEPO_AISLES[0];
+  const cursors = await readAisleCursors();
+  const aisleCounts = (await sql`SELECT aisle, COUNT(*)::int AS n FROM products WHERE aisle IS NOT NULL GROUP BY aisle`) as Row[];
+  const aisleSeen = (await sql`SELECT asin, title, url, image, last_price, list_price, highest_price, aisle
+    FROM products WHERE aisle IS NOT NULL ORDER BY aisle_seen DESC NULLS LAST LIMIT 12`) as Row[];
   return {
     ready: true,
     message: "",
     page: state.page,
     search: `Amazon Depo · ${depoQueryLabel(query)}`,
     aisle: aisle.label,
-    aislePage: state.aislePage,
+    aislePage: cursors[aisle.label]?.page ?? state.aislePage,
+    aisles: DEPO_AISLES.map((row) => ({
+      label: row.label,
+      page: cursors[row.label]?.page ?? 1,
+      count: num(aisleCounts.find((count) => String(count.aisle) === row.label)?.n) ?? 0,
+    })),
+    aisleItems: aisleSeen.map((row) => {
+      const price = num(row.last_price) ?? 0;
+      const list = num(row.list_price) ?? num(row.highest_price);
+      return {
+        asin: String(row.asin),
+        title: String(row.title ?? ""),
+        url: String(row.url ?? ""),
+        image: row.image ? String(row.image) : null,
+        price,
+        listPrice: num(row.list_price),
+        aisle: String(row.aisle ?? ""),
+        discount: list && list > price ? Math.round(((list - price) / list) * 100) : 0,
+      };
+    }),
     productCount: num(products[0]?.n) ?? 0,
     dealCount: num(deals[0]?.n) ?? 0,
     lastScanAt: state.lastScanAt,

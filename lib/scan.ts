@@ -10,9 +10,12 @@ import {
   markNotified,
   needsFreshVerdict,
   nextUnsent,
+  readAisleCursors,
   readState,
+  tagAisle,
   takePending,
   writeAisle,
+  writeAisleCursor,
   upsertProduct,
   writeState,
 } from "@/lib/db";
@@ -170,6 +173,8 @@ async function sendOne(): Promise<number> {
 }
 
 const PAGE_CAP = 200;
+// Reyonda çok derine inip tepedeki yeni fırsatları kaçırmasın.
+const AISLE_PAGE_CAP = 40;
 const TIME_BUDGET_MS = 45_000;
 
 function manualQuery(raw: string | undefined): string {
@@ -210,21 +215,22 @@ export async function scanOnce(onlyRaw?: string) {
     return count;
   }
 
-  let aisleIndex = state.aisleIndex % DEPO_AISLES.length;
-  let aislePage = state.aislePage;
-  let aisleUrl = keywordAisleUrl(state.aisleUrl) ? null : state.aisleUrl;
+  const aisleIndex = state.aisleIndex % DEPO_AISLES.length;
   if (!manual) {
     const aisle = DEPO_AISLES[aisleIndex];
+    const cursors = await readAisleCursors();
+    const saved = cursors[aisle.label];
     const seenHere = new Set<string>();
+    let page = saved && saved.page > 0 ? saved.page : 1;
+    let url: string | null = saved?.url && !keywordAisleUrl(saved.url) ? saved.url : null;
     let steps = 0;
-    let url: string | null = aisleUrl;
+    let restart = false;
     if (!url) {
       url = aisleStartUrl(aisle.label);
-      aisleUrl = url;
-      aislePage = 1;
-      await addLog("bilgi", `Reyon · ${aisle.label} açıldı.`);
+      page = 1;
+      await addLog("bilgi", `Reyon · ${aisle.label} baştan açıldı.`);
     }
-    while (url && Date.now() - started < 20_000 && steps < 6) {
+    while (url && Date.now() - started < 18_000 && steps < 5) {
       try {
         const loaded = await fetchAmazon(url, cookies);
         cookies = loaded.cookies;
@@ -235,41 +241,31 @@ export async function scanOnce(onlyRaw?: string) {
         const deals = parseSearchPage(loaded.html);
         const fresh = deals.filter((item) => !seenHere.has(item.asin));
         fresh.forEach((item) => seenHere.add(item.asin));
-        const more: string | null = scrollMoreUrl(loaded.html, url) || (fresh.length > 0 ? nextSearchPage(url) : null);
-        if (deals.length > 0 && fresh.length === 0) {
-          await addLog("bilgi", `Reyon · ${aisle.label} aşağısı bitti. Sıradaki reyon.`);
-          aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
-          aislePage = 1;
-          aisleUrl = null;
-          break;
-        }
         if (!deals.length) {
           const deeper = aisleEntryUrl(loaded.html, aisle.match);
           if (deeper && deeper !== url) {
             await addLog("bilgi", `Reyon · ${aisle.label} içine giriliyor.`);
             url = deeper;
-            aisleUrl = deeper;
             steps += 1;
             continue;
           }
-          await addLog("uyari", `Reyon · ${aisle.label} sayfasında ürün kartı yok. Sıradaki reyon.`);
-          aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
-          aislePage = 1;
-          aisleUrl = null;
+          await addLog("uyari", `Reyon · ${aisle.label} sayfa ${page}: ürün kartı yok. Baştan bakacak.`);
+          restart = true;
           break;
         }
         seen += await remember(fresh);
+        await tagAisle(fresh.map((item) => item.asin), aisle.label);
         steps += 1;
+        const more: string | null = page >= AISLE_PAGE_CAP
+          ? null
+          : (scrollMoreUrl(loaded.html, url) || nextSearchPage(url));
         if (!more) {
-          await addLog("bilgi", `Reyon · ${aisle.label} aşağısı bitti. Sıradaki reyon.`);
-          aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
-          aislePage = 1;
-          aisleUrl = null;
+          await addLog("bilgi", `Reyon · ${aisle.label} sonuna geldi. Baştan bakacak.`);
+          restart = true;
           break;
         }
-        await addLog("bilgi", `Reyon · ${aisle.label}: ${fresh.length} ürün. Aşağı iniliyor.`);
-        aislePage += 1;
-        aisleUrl = more;
+        await addLog("bilgi", `Reyon · ${aisle.label} sayfa ${page}: ${fresh.length} ürün. Aşağı iniliyor.`);
+        page += 1;
         url = more;
       } catch (error) {
         const message = error instanceof Error ? error.message : "açılmadı";
@@ -277,13 +273,8 @@ export async function scanOnce(onlyRaw?: string) {
         break;
       }
     }
-    if (steps > 0 && seenHere.size === 0 && aisleUrl) {
-      await addLog("uyari", `Reyon · ${aisle.label} sayfasında ürün kartı yok. Sıradaki reyon.`);
-      aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
-      aislePage = 1;
-      aisleUrl = null;
-    }
-    await writeAisle(aisleIndex, aislePage, aisleUrl);
+    await writeAisleCursor(aisle.label, restart ? { page: 1, url: null } : { page, url });
+    await writeAisle((aisleIndex + 1) % DEPO_AISLES.length, page, null);
   }
 
   while (Date.now() - started < TIME_BUDGET_MS && pages < 10) {

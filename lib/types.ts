@@ -22,6 +22,17 @@ export type RecentView = {
   listPrice: number | null;
 };
 
+export type AisleView = {
+  label: string;
+  page: number;
+  count: number;
+};
+
+export type AisleItemView = RecentView & {
+  aisle: string;
+  discount: number;
+};
+
 export type LogView = {
   level: string;
   message: string;
@@ -35,6 +46,8 @@ export type Status = {
   search: string;
   aisle: string;
   aislePage: number;
+  aisles: AisleView[];
+  aisleItems: AisleItemView[];
   productCount: number;
   dealCount: number;
   lastScanAt: string | null;

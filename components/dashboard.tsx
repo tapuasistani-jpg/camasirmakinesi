@@ -388,13 +388,31 @@ export default function Dashboard() {
           <h2>Reyonlar</h2>
           <p className="hint">Kategori turundan ayrı çalışır. Yeni Gelenler, Depo'ya yeni düşen ürünleri sırayla okur. Diğer üçü Depo sayfasının içinden açılır, aşağı inildikçe yeni ürünler okunur.</p>
           <div className="reyon-list">
-            {["Yeni Gelenler", "Günün Fırsatları", "Çok Al Az Öde", "Outlet"].map((name) => (
-              <div key={name} className={status?.aisle === name ? "now" : ""}>
-                <b>{name}</b>
-                <span>{status?.aisle === name ? `şimdi · sayfa ${status.aislePage}` : "sırada"}</span>
+            {(status?.aisles ?? []).map((row) => (
+              <div key={row.label} className={status?.aisle === row.label ? "now" : ""}>
+                <b>{row.label}</b>
+                <span>sayfa {row.page} · {row.count} ürün</span>
               </div>
             ))}
           </div>
+
+          <h3 className="reyon-head">Reyonda görülenler</h3>
+          {status?.aisleItems.length ? (
+            <div className="reyon-items">
+              {status.aisleItems.map((item) => (
+                <article className="recent-item" key={`${item.aisle}-${item.asin}`}>
+                  <Photo src={item.image} />
+                  <div>
+                    <div className="title">{item.title}</div>
+                    <span className="price">{tl(item.price)}</span>
+                    {item.listPrice ? <span className="old">{tl(item.listPrice)}</span> : null}
+                    {item.discount > 0 ? <span className="badge evet">%{item.discount}</span> : null}
+                    <a href={item.url} target="_blank" rel="noopener noreferrer">{item.aisle}</a>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : <p className="empty">Reyonda ürün görülmedi.</p>}
           <ol className="log">
             {(status?.logs ?? []).filter((line) => reyonLine(line.message)).map((line, index) => (
               <li key={`${line.createdAt}-${index}`}>{when(line.createdAt)} — {line.message.replace(/^Reyon · /, "")}</li>
