@@ -1,4 +1,4 @@
-import { DEPO_AISLES, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, aisleStartUrl, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, keywordAisleUrl, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, aisleStartUrls, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, keywordAisleUrl, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
@@ -226,9 +226,24 @@ export async function scanOnce(onlyRaw?: string) {
     let steps = 0;
     let restart = false;
     if (!url) {
-      url = aisleStartUrl(aisle.label);
       page = 1;
-      await addLog("bilgi", `Reyon · ${aisle.label} baştan açıldı.`);
+      for (const candidate of aisleStartUrls(aisle.label)) {
+        if (Date.now() - started > 15_000) break;
+        try {
+          const trial = await fetchAmazon(candidate, cookies);
+          cookies = trial.cookies;
+          if (isBlocked(trial.html) || parseSearchPage(trial.html).length === 0) continue;
+          url = candidate;
+          break;
+        } catch {
+          continue;
+        }
+      }
+      if (!url) {
+        await addLog("uyari", `Reyon · ${aisle.label} şu an açılmıyor. Sıradaki reyon.`);
+      } else {
+        await addLog("bilgi", `Reyon · ${aisle.label} baştan açıldı.`);
+      }
     }
     while (url && Date.now() - started < 18_000 && steps < 5) {
       try {

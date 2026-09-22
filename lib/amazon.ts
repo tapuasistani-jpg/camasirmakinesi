@@ -45,15 +45,31 @@ export const DEPO_AISLES = [
   { label: "Outlet", match: /outlet reyonu|\boutlet\b/i },
 ];
 
-const AISLE_START: Record<string, string> = {
-  "Yeni Gelenler": "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=date-desc-rank&page=1",
-  "Günün Fırsatları": "https://www.amazon.com.tr/s?i=specialty-aps&rh=p_n_deal_type%3A26902947031&page=1",
-  "Çok Al Az Öde": "https://www.amazon.com.tr/s?node=26248552031&page=1",
-  Outlet: "https://www.amazon.com.tr/s?node=21034466031&page=1",
+const AISLE_START: Record<string, string[]> = {
+  "Yeni Gelenler": [
+    "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=date-desc-rank&page=1",
+  ],
+  "Günün Fırsatları": [
+    "https://www.amazon.com.tr/s?rh=p_n_deal_type%3A26902947031&page=1",
+    "https://www.amazon.com.tr/s?i=specialty-aps&rh=p_n_deal_type%3A26902947031&page=1",
+    "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=price-asc-rank&page=1",
+  ],
+  "Çok Al Az Öde": [
+    "https://www.amazon.com.tr/s?node=26248552031&page=1",
+    "https://www.amazon.com.tr/s?rh=n%3A26248552031&page=1",
+  ],
+  Outlet: [
+    "https://www.amazon.com.tr/s?node=21034466031&page=1",
+    "https://www.amazon.com.tr/s?rh=n%3A21034466031&page=1",
+  ],
 };
 
-export function aisleStartUrl(label: string): string {
+export function aisleStartUrls(label: string): string[] {
   return AISLE_START[label] || AISLE_START["Yeni Gelenler"];
+}
+
+export function aisleStartUrl(label: string): string {
+  return aisleStartUrls(label)[0];
 }
 
 // Reyonların eski adresleri hafızada kalmasın.
@@ -576,6 +592,7 @@ export function assertAmazonParser(): void {
   if (!aisleStartUrl("Çok Al Az Öde").includes("node=26248552031")) throw new Error("çok al az öde adresi bozuk");
   if (!aisleStartUrl("Günün Fırsatları").includes("p_n_deal_type")) throw new Error("fırsat filtresi kaçtı");
   if (!aisleStartUrl("Yeni Gelenler").includes("s=date-desc-rank")) throw new Error("yeni gelenler sıralaması kaçtı");
+  if (aisleStartUrls("Günün Fırsatları").length < 2) throw new Error("fırsat reyonunun yedek adresi yok");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
