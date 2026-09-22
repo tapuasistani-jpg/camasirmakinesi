@@ -48,6 +48,7 @@ export type Status = {
   aislePage: number;
   aisles: AisleView[];
   aisleItems: AisleItemView[];
+  aisleAlerts: AlertView[];
   productCount: number;
   dealCount: number;
   lastScanAt: string | null;

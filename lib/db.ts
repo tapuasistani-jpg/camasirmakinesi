@@ -367,6 +367,7 @@ function blankStatus(message: string): Status {
     aislePage: 1,
     aisles: DEPO_AISLES.map((row) => ({ label: row.label, page: 1, count: 0 })),
     aisleItems: [],
+    aisleAlerts: [],
     productCount: 0,
     dealCount: 0,
     lastScanAt: null,
@@ -422,7 +423,25 @@ export async function getStatus(): Promise<Status> {
   const aisleCounts = (await sql`SELECT aisle, COUNT(*)::int AS n FROM products WHERE aisle IS NOT NULL GROUP BY aisle`) as Row[];
   const aisleSeen = (await sql`SELECT asin, title, url, image, last_price, list_price, highest_price, aisle
     FROM products WHERE aisle IS NOT NULL ORDER BY aisle_seen DESC NULLS LAST LIMIT 12`) as Row[];
+  const aisleAlerts = (await sql`SELECT a.* FROM alerts a
+    JOIN products p ON p.asin = a.asin AND p.aisle IS NOT NULL
+    ORDER BY a.id DESC LIMIT 20`) as Row[];
+  const alertView = (row: Row) => ({
+    id: num(row.id) ?? 0,
+    asin: String(row.asin),
+    title: String(row.title ?? ""),
+    url: String(row.url ?? ""),
+    image: row.image ? String(row.image) : null,
+    price: num(row.price) ?? 0,
+    listPrice: num(row.list_price),
+    discount: num(row.discount) ?? 0,
+    marketMedian: num(row.market_median),
+    verdict: String(row.verdict ?? ""),
+    detail: String(row.detail ?? ""),
+    createdAt: iso(row.created_at),
+  });
   return {
+    aisleAlerts: aisleAlerts.map(alertView),
     ready: true,
     message: "",
     page: state.page,
@@ -458,20 +477,7 @@ export async function getStatus(): Promise<Status> {
     chatId: config.chatId,
     notifySuspicious: config.notifySuspicious,
     urlTemplate: config.urlTemplate,
-    alerts: alerts.map((row) => ({
-      id: num(row.id) ?? 0,
-      asin: String(row.asin),
-      title: String(row.title ?? ""),
-      url: String(row.url ?? ""),
-      image: row.image ? String(row.image) : null,
-      price: num(row.price) ?? 0,
-      listPrice: num(row.list_price),
-      discount: num(row.discount) ?? 0,
-      marketMedian: num(row.market_median),
-      verdict: String(row.verdict ?? ""),
-      detail: String(row.detail ?? ""),
-      createdAt: iso(row.created_at),
-    })),
+    alerts: alerts.map(alertView),
     recent: recent.map((row) => ({
       asin: String(row.asin),
       title: String(row.title ?? ""),

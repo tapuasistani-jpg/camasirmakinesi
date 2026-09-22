@@ -396,6 +396,21 @@ export default function Dashboard() {
             ))}
           </div>
 
+          <h3 className="reyon-head">Reyondan çıkan fırsatlar</h3>
+          {status?.aisleAlerts.length ? status.aisleAlerts.map((deal) => (
+            <article className="deal" key={`reyon-${deal.id}`}>
+              <Photo src={deal.image} />
+              <div>
+                <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
+                <span className="price">%{Math.round(deal.discount)} · {tl(deal.price)}</span>
+                {deal.listPrice ? <span className="old">{tl(deal.listPrice)}</span> : null}
+                <div className="title">{deal.title}</div>
+                <p className="detail">{deal.detail}</p>
+                <a href={deal.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a>
+              </div>
+            </article>
+          )) : <p className="empty">Reyonlarda %{status?.minDiscount ?? 80} eşiğini geçen ürün çıkmadı. Çıkarsa buraya düşer ve Telegram'a gider.</p>}
+
           <h3 className="reyon-head">Reyonda görülenler</h3>
           {status?.aisleItems.length ? (
             <div className="reyon-items">
