@@ -293,6 +293,26 @@ function explicitNext(html: string, currentUrl: string): string | null {
   return fromRaw && fromRaw !== currentUrl ? fromRaw : null;
 }
 
+const MORE_SCROLL = /daha fazla göster|daha fazla gör|daha fazla sonuç|show more|load more/i;
+
+export function scrollMoreUrl(html: string, currentUrl: string): string | null {
+  const listed = continueResultsUrl(html, currentUrl);
+  if (listed) return listed;
+  const $ = cheerio.load(html);
+  let found: string | null = null;
+  $("a[href], button, span").each((_, element) => {
+    if (found) return;
+    const node = $(element);
+    const text = node.text().replace(/\s+/g, " ").trim();
+    if (!text || text.length > 60 || !MORE_SCROLL.test(text)) return;
+    const link = node.is("a[href]") ? node : node.closest("a[href]");
+    const href = link.attr("href") || node.attr("data-url") || node.closest("[data-url]").attr("data-url") || "";
+    const url = amazonUrl(href);
+    if (url && url !== currentUrl) found = url;
+  });
+  return found;
+}
+
 export function continueResultsUrl(html: string, currentUrl: string): string | null {
   const next = explicitNext(html, currentUrl);
   if (next) return next;

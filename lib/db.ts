@@ -99,6 +99,9 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS query_index INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS next_url TEXT`;
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS query_text TEXT`;
+  await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS aisle_index INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS aisle_page INT NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS aisle_url TEXT`;
 }
 
 function num(value: unknown): number | null {
@@ -296,9 +299,9 @@ export async function countProducts(): Promise<number> {
   return num(rows[0]?.n) ?? 0;
 }
 
-export async function readState(): Promise<{ page: number; queryIndex: number; nextUrl: string | null; queryText: string | null; lastError: string | null; lastScanAt: string | null }> {
+export async function readState(): Promise<{ page: number; queryIndex: number; nextUrl: string | null; queryText: string | null; aisleIndex: number; aislePage: number; aisleUrl: string | null; lastError: string | null; lastScanAt: string | null }> {
   await ensureSchema();
-  const rows = (await db()`SELECT page, query_index, next_url, query_text, last_error, last_scan_at FROM scan_state WHERE id = 1`) as Row[];
+  const rows = (await db()`SELECT page, query_index, next_url, query_text, aisle_index, aisle_page, aisle_url, last_error, last_scan_at FROM scan_state WHERE id = 1`) as Row[];
   const row = rows[0];
   const nextUrl = row?.next_url ? String(row.next_url) : null;
   const queryText = row?.query_text ? String(row.query_text).trim() : "";
@@ -307,6 +310,9 @@ export async function readState(): Promise<{ page: number; queryIndex: number; n
     queryIndex: Math.max(0, num(row?.query_index) ?? 0),
     nextUrl: nextUrl && nextUrl.startsWith("https://www.amazon.com.tr/") ? nextUrl : null,
     queryText: queryText ? queryText.slice(0, 80) : null,
+    aisleIndex: Math.max(0, num(row?.aisle_index) ?? 0),
+    aislePage: Math.max(1, num(row?.aisle_page) ?? 1),
+    aisleUrl: row?.aisle_url && String(row.aisle_url).startsWith("https://www.amazon.com.tr/") ? String(row.aisle_url) : null,
     lastError: row?.last_error ? String(row.last_error) : null,
     lastScanAt: iso(row?.last_scan_at),
   };
@@ -320,6 +326,10 @@ export async function writeState(
   queryText: string | null = null,
 ): Promise<void> {
   await db()`UPDATE scan_state SET page = ${page}, query_index = ${queryIndex}, next_url = ${nextUrl}, query_text = ${queryText}, last_error = ${lastError}, last_scan_at = NOW() WHERE id = 1`;
+}
+
+export async function writeAisle(index: number, page: number, url: string | null): Promise<void> {
+  await db()`UPDATE scan_state SET aisle_index = ${index}, aisle_page = ${page}, aisle_url = ${url} WHERE id = 1`;
 }
 
 function blankStatus(message: string): Status {
