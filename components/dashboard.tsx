@@ -40,7 +40,7 @@ function when(value: string | null | undefined): string {
 }
 
 function reyonLine(message: string): boolean {
-  return message.startsWith("Reyon") || /^(Günün Fırsatları|Çok Al Az Öde|Outlet)\b/.test(message);
+  return message.startsWith("Reyon") || /^(Yeni Gelenler|Günün Fırsatları|Çok Al Az Öde|Outlet)\b/.test(message);
 }
 
 function Photo({ src }: { src: string | null }) {
@@ -386,9 +386,9 @@ export default function Dashboard() {
       {screen === "reyon" ? (
         <section className="panel log-panel">
           <h2>Reyonlar</h2>
-          <p className="hint">Günün Fırsatları, Çok Al Az Öde ve Outlet, Depo sayfasının içinden açılır. Kategori turundan ayrıdır. Aşağı inildikçe yeni ürünler okunur.</p>
+          <p className="hint">Kategori turundan ayrı çalışır. Yeni Gelenler, Depo'ya yeni düşen ürünleri sırayla okur. Diğer üçü Depo sayfasının içinden açılır, aşağı inildikçe yeni ürünler okunur.</p>
           <div className="reyon-list">
-            {["Günün Fırsatları", "Çok Al Az Öde", "Outlet"].map((name) => (
+            {["Yeni Gelenler", "Günün Fırsatları", "Çok Al Az Öde", "Outlet"].map((name) => (
               <div key={name} className={status?.aisle === name ? "now" : ""}>
                 <b>{name}</b>
                 <span>{status?.aisle === name ? `şimdi · sayfa ${status.aislePage}` : "sırada"}</span>

@@ -39,6 +39,7 @@ export function depoSearchUrl(query: string, page: number): string {
 export const DEPO_HOME = "https://www.amazon.com.tr/b?node=44219324031";
 
 export const DEPO_AISLES = [
+  { label: "Yeni Gelenler", match: /yeni gelenler/i },
   { label: "Günün Fırsatları", match: /günün fırsat/i },
   { label: "Çok Al Az Öde", match: /çok al.{0,12}az öde/i },
   { label: "Outlet", match: /outlet reyonu|\boutlet\b/i },
@@ -56,6 +57,9 @@ export function keywordAisleUrl(url: string | null): boolean {
 }
 
 export function aisleStartUrl(label: string): string {
+  if (label === "Yeni Gelenler") {
+    return "https://www.amazon.com.tr/s?i=warehouse-deals&url=search-alias%3Dwarehouse-deals&s=date-desc-rank&page=1";
+  }
   if (label === "Günün Fırsatları") {
     return "https://www.amazon.com.tr/s?i=warehouse-deals&rh=p_n_deal_type%3A26902947031&fs=true";
   }
@@ -569,6 +573,7 @@ export function assertAmazonParser(): void {
   if (!aisleStartUrl("Outlet").includes("k=Outlet") || !aisleStartUrl("Günün Fırsatları").includes("warehouse-deals")) {
     throw new Error("reyon başlangıç adresi bozuk");
   }
+  if (!aisleStartUrl("Yeni Gelenler").includes("s=date-desc-rank")) throw new Error("yeni gelenler sıralaması kaçtı");
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
