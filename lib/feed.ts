@@ -23,12 +23,15 @@ import {
   addLog,
   enqueuePending,
   getConfig,
+  insertAlert,
   needsFreshVerdict,
   readAisleCursors,
   readSetting,
   readState,
   tagAisle,
   upsertProduct,
+  watchDrop,
+  watchedAsins,
   writeAisle,
   writeAisleCursor,
   writeSetting,
@@ -83,9 +86,34 @@ export async function nextTarget(): Promise<Target> {
 
 async function remember(items: ProductCard[], minDiscount: number): Promise<number> {
   let count = 0;
+  const watched = await watchedAsins();
   for (const item of items) {
     const memory = await upsertProduct(item);
     count += 1;
+    if (watched.has(item.asin)) {
+      const drop = await watchDrop(item);
+      if (drop.hit) {
+        const reference = drop.target && item.price <= drop.target ? drop.target : drop.base;
+        await insertAlert({
+          asin: item.asin,
+          title: item.title,
+          url: item.url,
+          image: item.image,
+          price: item.price,
+          listPrice: item.listPrice,
+          highestPrice: memory.highest,
+          notify: true,
+          verdict: {
+            verdict: "evet",
+            discount: Math.round(percentOff(item.price, reference ?? memory.highest) * 10) / 10,
+            marketMedian: null,
+            marketSamples: 0,
+            detail: `Takip listendeki ürün düştü. Şimdi ${Math.round(item.price)} TL.`,
+          },
+        });
+        await addLog("bilgi", `Takip: ${item.title.slice(0, 70)} düştü.`);
+      }
+    }
     const listOff = percentOff(item.price, item.listPrice);
     const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.highest) : 0;
     if (Math.max(listOff, memoryOff) < minDiscount) continue;

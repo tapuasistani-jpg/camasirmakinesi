@@ -43,6 +43,22 @@ function reyonLine(message: string): boolean {
   return message.startsWith("Reyon") || /^(Yeni Gelenler|Günün Fırsatları|Çok Al Az Öde|Outlet)\b/.test(message);
 }
 
+function History({ rows }: { rows: { price: number; seenAt: string | null }[] }) {
+  if (!rows.length) return <p className="empty">Bu üründe kayıtlı fiyat değişimi yok.</p>;
+  const top = Math.max(...rows.map((row) => row.price)) || 1;
+  return (
+    <ol className="history">
+      {rows.map((row, index) => (
+        <li key={`${row.seenAt}-${index}`}>
+          <span className="bar" style={{ width: `${Math.max(6, Math.round((row.price / top) * 100))}%` }} />
+          <b>{tl(row.price)}</b>
+          <span>{when(row.seenAt)}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function Photo({ src }: { src: string | null }) {
   if (!src || !src.startsWith("https://")) return <span className="ph" />;
   return <img alt="" src={src} />;
@@ -56,7 +72,7 @@ export default function Dashboard() {
   const [gateReady, setGateReady] = useState(false);
   const [botToken, setBotToken] = useState("");
   const [chatId, setChatId] = useState("");
-  const [minDiscount, setMinDiscount] = useState(80);
+  const [minDiscount, setMinDiscount] = useState(50);
   const [notifySuspicious, setNotifySuspicious] = useState(false);
   const [chats, setChats] = useState<{ id: string; label: string }[]>([]);
   const [note, setNote] = useState("");
@@ -65,6 +81,9 @@ export default function Dashboard() {
   const [category, setCategory] = useState("Elektronik");
   const [customCategory, setCustomCategory] = useState("");
   const [screen, setScreen] = useState<"depo" | "reyon">("depo");
+  const [watchInput, setWatchInput] = useState("");
+  const [watchTarget, setWatchTarget] = useState("");
+  const [history, setHistory] = useState<{ asin: string; rows: { price: number; seenAt: string | null }[] } | null>(null);
   const [lookup, setLookup] = useState("");
   const [looking, setLooking] = useState(false);
   const [offers, setOffers] = useState<{ shop: string; title: string; url: string; price: number }[]>([]);
@@ -88,7 +107,7 @@ export default function Dashboard() {
     if (!filled.current && data.ready) {
       filled.current = true;
       setChatId(data.chatId || "");
-      setMinDiscount(data.minDiscount || 80);
+      setMinDiscount(data.minDiscount || 50);
       setNotifySuspicious(Boolean(data.notifySuspicious));
     }
   }
@@ -163,7 +182,7 @@ export default function Dashboard() {
     const picked = customCategory.trim() || category;
     setBusy(true);
     sessionStorage.setItem("camasir-admin", password);
-    const response = await fetch("/api/cron/scan", {
+    const response = await fetch("/api/category", {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ category: picked }),
@@ -171,11 +190,55 @@ export default function Dashboard() {
     const data = await response.json();
     setBusy(false);
     if (!response.ok) {
-      say(data.error || "Tarama açılmadı", false);
+      say(data.error || "Sıraya alınamadı", false);
       return;
     }
-    say(data.blocked ? "Amazon robot kontrolü gösterdi." : `"${picked}" arandı: ${data.seen} ürün.`, !data.blocked);
+    say(`"${picked}" sıraya alındı. Sıradaki sayfadan itibaren bu kategori taranacak.`, true);
     await load();
+  }
+
+  async function watchAdd(event: React.FormEvent) {
+    event.preventDefault();
+    sessionStorage.setItem("camasir-admin", password);
+    const response = await fetch("/api/watch", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ item: watchInput, target: Number(watchTarget) || 0 }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      say(data.error || "Takibe alınamadı", false);
+      return;
+    }
+    setWatchInput("");
+    setWatchTarget("");
+    say("Takibe alındı. Fiyatı düşerse Telegram'a yazar.", true);
+    await load();
+  }
+
+  async function watchDrop(asin: string) {
+    sessionStorage.setItem("camasir-admin", password);
+    await fetch("/api/watch", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ item: asin, remove: true }),
+    });
+    await load();
+  }
+
+  async function showHistory(asin: string) {
+    if (history?.asin === asin) {
+      setHistory(null);
+      return;
+    }
+    sessionStorage.setItem("camasir-admin", password);
+    const response = await fetch(`/api/watch?asin=${asin}`, { headers: headers() });
+    const data = await response.json();
+    if (!response.ok) {
+      say(data.error || "Geçmiş okunamadı", false);
+      return;
+    }
+    setHistory({ asin, rows: data.history || [] });
   }
 
   async function compare(event: React.FormEvent) {
@@ -254,7 +317,7 @@ export default function Dashboard() {
           <h1>Amazon Depo alarmı</h1>
           <p className="lede">
             Makine kendi kendine gece gündüz Amazon Depo'yu tarar. Tarayıcıyı açık bırakmana gerek yok.
-            İstediğin kategoriyi sağdan seçip ayrıca da aratabilirsin. %80 ve üstü Google ile karşılaştırılır.
+            İstediğin kategoriyi sağdan seçip sıraya alabilirsin. %{status?.minDiscount ?? 50} ve üstü indirimler piyasayla karşılaştırılır.
             Telegram'a yalnız net ucuz çıkanlar gider.
           </p>
         </div>
@@ -271,6 +334,7 @@ export default function Dashboard() {
       <section className="stats">
         <div className="stat"><span>Hafıza</span><b>{status?.productCount ?? "—"}</b></div>
         <div className="stat"><span>Net fırsat</span><b>{status?.dealCount ?? "—"}</b></div>
+        <div className="stat"><span>Sırada bekleyen</span><b>{status?.pendingCount ?? "—"}</b></div>
         <div className="stat"><span>{status?.search ?? "Amazon Depo"}</span><b>sayfa {status?.page ?? "—"}</b></div>
         <div className="stat"><span>Son tarama</span><b style={{ fontSize: 16 }}>{when(status?.lastScanAt)}</b></div>
       </section>
@@ -301,7 +365,7 @@ export default function Dashboard() {
         <section className="panel">
           <div className="panel-head">
             <h2>Kararlar</h2>
-            <p>%80 eşiğini geçen ürünler. EVET = piyasadan da ucuz.</p>
+            <p>%{status?.minDiscount ?? 50} eşiğini geçen ürünler. EVET = piyasadan da ucuz.</p>
           </div>
           {status?.alerts.length ? status.alerts.map((deal) => (
             <article className="deal" key={deal.id}>
@@ -313,9 +377,47 @@ export default function Dashboard() {
                 <div className="title">{deal.title}</div>
                 <p className="detail">{deal.detail}</p>
                 <a href={deal.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a>
+                <div className="row-buttons">
+                  <button className="ghost" type="button" onClick={() => showHistory(deal.asin)}>Fiyat geçmişi</button>
+                  <button className="ghost" type="button" onClick={() => { setWatchInput(deal.asin); say("Ürün kodu yazıldı, aşağıdan Takibe al'a bas.", true); }}>Takibe al</button>
+                </div>
+                {history?.asin === deal.asin ? <History rows={history.rows} /> : null}
               </div>
             </article>
-          )) : <p className="empty">Henüz %{status?.minDiscount ?? 80} eşiğini geçen ürün yok.</p>}
+          )) : <p className="empty">Henüz %{status?.minDiscount ?? 50} eşiğini geçen ürün yok. Sırada bekleyen {status?.pendingCount ?? 0} ürün var.</p>}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Takip listem</h2>
+            <p>Amazon linkini ya da ürün kodunu yaz. Fiyatı düşerse Telegram'a yazar.</p>
+          </div>
+          <form onSubmit={watchAdd} className="watch-form">
+            <label>Link veya ürün kodu
+              <input type="text" value={watchInput} placeholder="https://www.amazon.com.tr/dp/B0..." onChange={(event) => setWatchInput(event.target.value)} />
+            </label>
+            <label>Hedef fiyat (isteğe bağlı)
+              <input type="number" min={0} value={watchTarget} placeholder="örnek: 2500" onChange={(event) => setWatchTarget(event.target.value)} />
+            </label>
+            <button type="submit">Takibe al</button>
+          </form>
+          {status?.watch.length ? status.watch.map((item) => (
+            <article className="recent-item" key={item.asin}>
+              <Photo src={item.image} />
+              <div>
+                <div className="title">{item.title || item.asin}</div>
+                <span className="price">{tl(item.price)}</span>
+                {item.targetPrice ? <span className="detail">hedef {tl(item.targetPrice)}</span> : null}
+                {item.basePrice ? <span className="old">en iyi {tl(item.basePrice)}</span> : null}
+                <div className="row-buttons">
+                  <a href={item.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a>
+                  <button className="ghost" type="button" onClick={() => showHistory(item.asin)}>Fiyat geçmişi</button>
+                  <button className="ghost" type="button" onClick={() => watchDrop(item.asin)}>Çıkar</button>
+                </div>
+                {history?.asin === item.asin ? <History rows={history.rows} /> : null}
+              </div>
+            </article>
+          )) : <p className="empty">Takip listen boş.</p>}
         </section>
 
         <aside>
@@ -350,7 +452,7 @@ export default function Dashboard() {
                 <input type="text" value={customCategory} placeholder="örnek: kulaklık" onChange={(event) => setCustomCategory(event.target.value)} />
               </label>
               <label>İndirim eşiği %
-                <input type="number" min={40} max={95} value={minDiscount} onChange={(event) => setMinDiscount(Number(event.target.value))} />
+                <input type="number" min={20} max={95} value={minDiscount} onChange={(event) => setMinDiscount(Number(event.target.value))} />
               </label>
               <label className="check">
                 <input type="checkbox" checked={notifySuspicious} onChange={(event) => setNotifySuspicious(event.target.checked)} />

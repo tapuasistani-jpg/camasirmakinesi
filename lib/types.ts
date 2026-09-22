@@ -33,6 +33,16 @@ export type AisleItemView = RecentView & {
   discount: number;
 };
 
+export type WatchView = {
+  asin: string;
+  title: string;
+  url: string;
+  image: string | null;
+  price: number | null;
+  basePrice: number | null;
+  targetPrice: number | null;
+};
+
 export type LogView = {
   level: string;
   message: string;
@@ -49,6 +59,8 @@ export type Status = {
   aisles: AisleView[];
   aisleItems: AisleItemView[];
   aisleAlerts: AlertView[];
+  watch: WatchView[];
+  pendingCount: number;
   productCount: number;
   dealCount: number;
   lastScanAt: string | null;

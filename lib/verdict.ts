@@ -55,7 +55,7 @@ export function decide(input: {
       detail: `Evet. Bu ürünü daha önce ${tl(input.highestPrice)} TL görmüştük, şimdi ${tl(input.price)} TL. Düşüş %${Math.round(memoryOff)}.`,
     };
   }
-  if (median && input.price <= median * 0.6) {
+  if (median && input.price <= median * 0.7) {
     const gap = (1 - input.price / median) * 100;
     return {
       verdict: "evet",
@@ -94,4 +94,6 @@ export function assertVerdicts(): void {
   }
   const echoed = withoutEcho([1299, 1300, 7000, 7100], 1299);
   if (echoed.length !== 2 || echoed[0] !== 7000) throw new Error("piyasa filtresi bozuldu");
+  const cheaper = decide({ price: 3000, listPrice: 9000, highestPrice: 3000, samples: 1, marketPrices: [4400, 4500, 4600], threshold: 50 });
+  if (cheaper?.verdict !== "evet") throw new Error("piyasadan üçte bir ucuz ürün kaçtı");
 }

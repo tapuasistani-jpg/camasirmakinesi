@@ -447,6 +447,65 @@ export function hasNextPage(html: string): boolean {
   return /daha fazla sonuç/i.test($.text());
 }
 
+// Mağaza reyonları arama sayfası kalıbını kullanmıyor; kartlarda data-asin yok.
+const STORE_MARKS = /DossierAsinGridWidget|storeBrowseId|data-csa-c-item-id|octopus-pc-item/i;
+
+export function parseStorePage(html: string): ProductCard[] {
+  if (!STORE_MARKS.test(html)) return [];
+  const $ = cheerio.load(html);
+  const found: ProductCard[] = [];
+  const seen = new Set<string>();
+  $("a[href*='/dp/']").each((_, element) => {
+    const link = $(element);
+    const asin = (link.attr("href") || "").match(/\/dp\/([A-Z0-9]{10})/i)?.[1]?.toUpperCase() || "";
+    if (!/^[A-Z0-9]{10}$/.test(asin) || seen.has(asin)) return;
+    let card = link.parent();
+    let price: number | null = null;
+    for (let step = 0; step < 6 && card.length; step += 1) {
+      // Kutu büyüyüp başka ürünü içine alırsa fiyat karışır.
+      const others = new Set(
+        card.find("a[href*='/dp/']").toArray()
+          .map((node) => ($(node).attr("href") || "").match(/\/dp\/([A-Z0-9]{10})/i)?.[1]?.toUpperCase() || ""),
+      );
+      others.delete(asin);
+      others.delete("");
+      if (others.size > 0) break;
+      price = priceFromCard(card, false) ?? (clean(card.text()).length < 400 ? looseTl(card) : null);
+      if (price != null) break;
+      card = card.parent();
+    }
+    if (price == null || !card.length) return;
+    const title = clean(
+      card.find("img[alt]").first().attr("alt")
+      || link.attr("aria-label")
+      || link.find("span").first().text()
+      || link.text(),
+    );
+    if (title.length < 3) return;
+    const cardText = clean(card.text());
+    let listPrice: number | null = null;
+    card.find("span.a-price.a-text-price, span.a-text-price").each((__, node) => {
+      if (listPrice != null) return;
+      const value = parsePrice($(node).find("span.a-offscreen").first().text() || $(node).text());
+      if (value == null || value <= price) return;
+      if (isUnitPrice(cardText) || fakeListPrice(title, price, value)) return;
+      listPrice = value;
+    });
+    const image = card.find("img[src]").first().attr("src") || null;
+    seen.add(asin);
+    found.push({
+      asin,
+      title: title.slice(0, 300),
+      price,
+      listPrice,
+      image: image?.startsWith("https://") ? image : null,
+      condition: "",
+      url: `https://www.amazon.com.tr/dp/${asin}`,
+    });
+  });
+  return found;
+}
+
 export function parseSearchPage(html: string): ProductCard[] {
   const $ = cheerio.load(html);
   const found: ProductCard[] = [];
@@ -496,7 +555,7 @@ export function parseSearchPage(html: string): ProductCard[] {
       url: `https://www.amazon.com.tr/dp/${asin}`,
     });
   });
-  return found;
+  return found.length ? found : parseStorePage(html);
 }
 
 export function assertAmazonParser(): void {
@@ -626,6 +685,20 @@ export function assertAmazonParser(): void {
   if (!aisleStartUrl("Günün Fırsatları").includes("p_n_deal_type")) throw new Error("fırsat filtresi kaçtı");
   if (!aisleStartUrl("Yeni Gelenler").includes("s=date-desc-rank")) throw new Error("yeni gelenler sıralaması kaçtı");
   if (aisleStartUrls("Günün Fırsatları").length < 2) throw new Error("fırsat reyonunun yedek adresi yok");
+  const storeGrid = `
+    <div data-csa-c-item-id="amzn1.asin.B0STORE1234" class="octopus-pc-item">
+      <a href="/Outlet/dp/B0STORE1234/ref=sr_1"><img src="https://m.media-amazon.com/x.jpg" alt="Outlet Kulaklık"></a>
+      <span class="a-price"><span class="a-offscreen">1.299,00 TL</span></span>
+      <span class="a-price a-text-price"><span class="a-offscreen">2.999,00 TL</span></span>
+    </div>
+  `;
+  const storeItems = parseSearchPage(storeGrid);
+  if (storeItems.length !== 1 || storeItems[0].price !== 1299 || storeItems[0].listPrice !== 2999) {
+    throw new Error("mağaza reyonu kartı okunamadı");
+  }
+  if (parseStorePage(`<a href="/dp/B0PLAIN1234">Ürün</a><span class="a-price"><span class="a-offscreen">10,00 TL</span></span>`).length !== 0) {
+    throw new Error("mağaza olmayan sayfa reyon sanıldı");
+  }
   if (nodeFromUrl("https://www.amazon.com.tr/s?rh=n%3A21034466031&fs=true") !== "21034466031") throw new Error("reyon numarası okunamadı");
   const store = `<a href="/b?node=21034466031">Outlet</a><a href="/s?i=specialty-aps&amp;rh=n%3A21034466031&amp;qid=17">Tümü</a>`;
   const listing = nodeListingUrl(store, "21034466031");

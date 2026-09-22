@@ -104,6 +104,69 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS aisle_url TEXT`;
   await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS aisle TEXT`;
   await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS aisle_seen TIMESTAMPTZ`;
+  await sql`CREATE TABLE IF NOT EXISTS watch (
+    asin TEXT PRIMARY KEY,
+    title TEXT,
+    url TEXT,
+    image TEXT,
+    target_price DOUBLE PRECISION,
+    base_price DOUBLE PRECISION,
+    added_at TIMESTAMPTZ DEFAULT NOW()
+  )`;
+}
+
+export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
+  const sql = db();
+  const rows = (await sql`SELECT title, url, image, last_price FROM products WHERE asin = ${asin}`) as Row[];
+  const row = rows[0];
+  await sql`INSERT INTO watch (asin, title, url, image, target_price, base_price)
+    VALUES (
+      ${asin},
+      ${row ? String(row.title ?? "") : ""},
+      ${row ? String(row.url ?? `https://www.amazon.com.tr/dp/${asin}`) : `https://www.amazon.com.tr/dp/${asin}`},
+      ${row?.image ? String(row.image) : null},
+      ${targetPrice},
+      ${num(row?.last_price)}
+    )
+    ON CONFLICT (asin) DO UPDATE SET target_price = EXCLUDED.target_price`;
+}
+
+export async function removeWatch(asin: string): Promise<void> {
+  await db()`DELETE FROM watch WHERE asin = ${asin}`;
+}
+
+export async function watchedAsins(): Promise<Set<string>> {
+  const rows = (await db()`SELECT asin FROM watch`) as Row[];
+  return new Set(rows.map((row) => String(row.asin)));
+}
+
+// Takip edilen ürün düştü mü: hedefin altına indi ya da gördüğümüz en iyi fiyatı geçti.
+export async function watchDrop(item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
+  const sql = db();
+  const rows = (await sql`SELECT target_price, base_price FROM watch WHERE asin = ${item.asin}`) as Row[];
+  if (!rows.length) return { hit: false, base: null, target: null };
+  const target = num(rows[0].target_price);
+  const base = num(rows[0].base_price);
+  const hit = (target != null && item.price <= target) || (base != null && item.price <= base * 0.95);
+  await sql`UPDATE watch SET
+    title = COALESCE(NULLIF(${item.title}, ''), title),
+    url = ${item.url},
+    image = COALESCE(${item.image}, image),
+    base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price})
+    WHERE asin = ${item.asin}`;
+  return { hit, base, target };
+}
+
+export async function priceHistory(asin: string): Promise<{ price: number; seenAt: string | null }[]> {
+  const rows = (await db()`SELECT price, seen_at FROM price_points WHERE asin = ${asin} ORDER BY id DESC LIMIT 30`) as Row[];
+  return rows.map((row) => ({ price: num(row.price) ?? 0, seenAt: iso(row.seen_at) }));
+}
+
+export async function pinCategory(category: string): Promise<void> {
+  const state = await readState();
+  await db()`UPDATE settings SET value = '' WHERE key = 'tour_mark'`;
+  await writeState(1, state.queryIndex, null, null, category);
+  await addLog("bilgi", `Sıraya alındı: "${category}". Sıradaki sayfa bu kategoriden çekilecek.`);
 }
 
 export type AisleCursor = { page: number; url: string | null };
@@ -189,11 +252,11 @@ async function settingsMap(): Promise<Record<string, string>> {
 export async function getConfig() {
   await ensureSchema();
   const map = await settingsMap();
-  const min = Number(map.min_discount || process.env.MIN_DISCOUNT || 80);
+  const min = Number(map.min_discount || process.env.MIN_DISCOUNT || 50);
   return {
     token: map.bot_token || process.env.TELEGRAM_BOT_TOKEN || "",
     chatId: map.chat_id || process.env.TELEGRAM_CHAT_ID || "",
-    minDiscount: Math.min(95, Math.max(40, Number.isFinite(min) ? min : 80)),
+    minDiscount: Math.min(95, Math.max(20, Number.isFinite(min) ? min : 50)),
     notifySuspicious: map.notify_suspicious === "1",
     urlTemplate: validTemplate(map.url_template) || SEARCH_URL,
   };
@@ -218,7 +281,7 @@ export async function saveSettings(input: {
   if (token && !token.includes("••••")) await putSetting("bot_token", token);
   if (input.chatId != null) await putSetting("chat_id", input.chatId.trim());
   if (input.minDiscount != null && Number.isFinite(input.minDiscount)) {
-    await putSetting("min_discount", String(Math.min(95, Math.max(40, Math.round(input.minDiscount)))));
+    await putSetting("min_discount", String(Math.min(95, Math.max(20, Math.round(input.minDiscount)))));
   }
   if (input.notifySuspicious != null) await putSetting("notify_suspicious", input.notifySuspicious ? "1" : "0");
   if (input.urlTemplate) {
@@ -395,11 +458,13 @@ function blankStatus(message: string): Status {
     aisles: DEPO_AISLES.map((row) => ({ label: row.label, page: 1, count: 0 })),
     aisleItems: [],
     aisleAlerts: [],
+    watch: [],
+    pendingCount: 0,
     productCount: 0,
     dealCount: 0,
     lastScanAt: null,
     lastError: null,
-    minDiscount: 80,
+    minDiscount: 50,
     hasToken: false,
     tokenHint: "",
     chatId: "",
@@ -467,8 +532,21 @@ export async function getStatus(): Promise<Status> {
     detail: String(row.detail ?? ""),
     createdAt: iso(row.created_at),
   });
+  const watchRows = (await sql`SELECT w.asin, w.title, w.url, w.image, w.target_price, w.base_price, p.last_price
+    FROM watch w LEFT JOIN products p ON p.asin = w.asin ORDER BY w.added_at DESC LIMIT 30`) as Row[];
+  const waiting = (await sql`SELECT COUNT(*)::int AS n FROM pending`) as Row[];
   return {
     aisleAlerts: aisleAlerts.map(alertView),
+    pendingCount: num(waiting[0]?.n) ?? 0,
+    watch: watchRows.map((row) => ({
+      asin: String(row.asin),
+      title: String(row.title ?? ""),
+      url: String(row.url ?? ""),
+      image: row.image ? String(row.image) : null,
+      price: num(row.last_price),
+      basePrice: num(row.base_price),
+      targetPrice: num(row.target_price),
+    })),
     ready: true,
     message: "",
     page: state.page,
