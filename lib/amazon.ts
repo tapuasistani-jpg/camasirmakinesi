@@ -49,10 +49,18 @@ export function keywordAisleUrl(url: string | null): boolean {
   try {
     const params = new URL(url).searchParams;
     const k = (params.get("k") || "").trim();
-    return /^(günün fırsatları|çok al az öde|outlet)$/i.test(k) && !params.get("rh");
+    return /^günün fırsatları$/i.test(k) && !params.get("rh");
   } catch {
     return false;
   }
+}
+
+export function aisleStartUrl(label: string): string {
+  if (label === "Günün Fırsatları") {
+    return "https://www.amazon.com.tr/s?i=warehouse-deals&rh=p_n_deal_type%3A26902947031&fs=true";
+  }
+  if (label === "Çok Al Az Öde") return depoSearchUrl("Çok Al Az Öde", 1);
+  return depoSearchUrl("Outlet", 1);
 }
 
 function depoScoped(url: string): boolean {
@@ -556,7 +564,11 @@ export function assertAmazonParser(): void {
   const aisle = aisleEntryUrl(aisleHtml, /günün fırsat/i);
   if (!aisle?.includes("warehouse-deals") || !aisle.includes("44219324031")) throw new Error("reyon linki kaçtı");
   if (aisleEntryUrl(aisleHtml, /çok al.{0,12}az öde/i) !== null) throw new Error("site geneli fırsat reyon sandı");
-  if (!keywordAisleUrl("https://www.amazon.com.tr/s?k=Outlet&i=warehouse-deals&page=1")) throw new Error("eski reyon araması duruyor");
+  if (keywordAisleUrl("https://www.amazon.com.tr/s?k=Outlet&i=warehouse-deals&page=1")) throw new Error("outlet listesi silindi");
+  if (!keywordAisleUrl("https://www.amazon.com.tr/s?k=G%C3%BCn%C3%BCn%20F%C4%B1rsatlar%C4%B1&i=warehouse-deals&page=1")) throw new Error("boş fırsat araması duruyor");
+  if (!aisleStartUrl("Outlet").includes("k=Outlet") || !aisleStartUrl("Günün Fırsatları").includes("warehouse-deals")) {
+    throw new Error("reyon başlangıç adresi bozuk");
+  }
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");

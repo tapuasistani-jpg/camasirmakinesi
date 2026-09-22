@@ -1,4 +1,4 @@
-import { DEPO_AISLES, DEPO_HOME, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, keywordAisleUrl, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_HOME, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, aisleStartUrl, continueResultsUrl, continueTarget, depoQueryLabel, depoSearchUrl, elektronikPageUrl, isBlocked, keywordAisleUrl, nextSearchPage, pageFlipUrl, pageSummary, pageTurnUrl, parseSearchPage, scrollMoreUrl, seeAllResultsUrl } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
@@ -233,15 +233,13 @@ export async function scanOnce(onlyRaw?: string) {
         await addLog("uyari", `Reyon · ${aisle.label} açılmadı: ${message}`);
       }
       if (!url) {
-        await addLog("uyari", `Reyon · ${aisle.label} Depo sayfasında link olarak çıkmadı. Sıradaki reyon.`);
-        aisleIndex = (aisleIndex + 1) % DEPO_AISLES.length;
-        aislePage = 1;
-        aisleUrl = null;
+        url = aisleStartUrl(aisle.label);
+        await addLog("bilgi", `Reyon · ${aisle.label} liste sayfasından açıldı.`);
       } else {
         await addLog("bilgi", `Reyon · ${aisle.label} açıldı.`);
-        aisleUrl = url;
-        aislePage = 1;
       }
+      aisleUrl = url;
+      aislePage = 1;
     }
     while (url && Date.now() - started < 20_000 && steps < 6) {
       try {
