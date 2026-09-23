@@ -20,6 +20,7 @@ jobs:
         env:
           SCAN_URL: ${{ secrets.SCAN_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AMAZON_PROXY: ${{ secrets.AMAZON_PROXY }}
         run: |
           set +e
           if [ -z "$SCAN_URL" ] || [ -z "$CRON_SECRET" ]; then
@@ -30,8 +31,28 @@ jobs:
           auth="Authorization: Bearer $CRON_SECRET"
           agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
           deadline=$((SECONDS + 200 * 60))
+          px=()
+          wait_tur=3
+          wait_diger=2
+          wait_ek=1
+          wait_hata=90
+          if [ -n "$AMAZON_PROXY" ]; then
+            proxy="$AMAZON_PROXY"
+            case "$proxy" in
+              *://*) ;;
+              *) proxy="http://$proxy" ;;
+            esac
+            px=(-x "$proxy")
+            wait_tur=1
+            wait_diger=1
+            wait_ek=0
+            wait_hata=45
+            echo "Amazon proxy acik, hizli tempo."
+          else
+            echo "Amazon proxy yok, normal tempo."
+          fi
 
-          curl -sS -m 30 -c jar.txt -A "$agent" \
+          curl -sS -m 30 "${px[@]}" -c jar.txt -A "$agent" \
             -H "Accept-Language: tr-TR,tr;q=0.9" \
             "https://www.amazon.com.tr/" -o /dev/null || true
 
@@ -41,21 +62,21 @@ jobs:
             kind=$(echo "$target" | jq -r '.kind // "tur"' 2>/dev/null || true)
             label=$(echo "$target" | jq -r '.label // ""' 2>/dev/null || true)
             if [ -z "$url" ]; then
-              echo "Sıradaki adres gelmedi, 1 dakika bekleniyor."
-              sleep 60
+              echo "Sıradaki adres gelmedi, 15 saniye bekleniyor."
+              sleep 15
               target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next" || true)
               continue
             fi
             echo "$kind · $label · $url"
-            code=$(curl -sS --compressed -m 45 -b jar.txt -c jar.txt -A "$agent" \
+            code=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
               -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
               -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
               -H "Upgrade-Insecure-Requests: 1" \
               -H "Referer: https://www.amazon.com.tr/" \
               -w '%{http_code}' -o sayfa.html "$url" || echo "000")
             if [ "$code" != "200" ]; then
-              echo "Amazon $code verdi, 3 dakika bekleniyor."
-              sleep 180
+              echo "Amazon $code verdi, ${wait_hata} saniye bekleniyor."
+              sleep "$wait_hata"
               continue
             fi
             jq -n --arg url "$url" --arg kind "$kind" --arg label "$label" --rawfile html sayfa.html \
@@ -78,7 +99,7 @@ jobs:
                 elabel=$(echo "$extra" | jq -r '.label // ""')
                 [ -z "$eurl" ] && continue
                 echo "ek · $ekind · $elabel · $eurl"
-                ecode=$(curl -sS --compressed -m 45 -b jar.txt -c jar.txt -A "$agent" \
+                ecode=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
                   -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
                   -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
                   -H "Referer: https://www.amazon.com.tr/" \
@@ -89,13 +110,13 @@ jobs:
                 curl -sS -m 55 -X POST -H "$auth" -H 'Content-Type: application/json' \
                   --data @gonder.json "$base/api/cron/feed" | head -c 200 || true
                 echo
-                sleep 3
+                sleep "$wait_ek"
               done
             fi
             if [ "$kind" = "tur" ]; then
-              sleep 7
+              sleep "$wait_tur"
             else
-              sleep 4
+              sleep "$wait_diger"
             fi
           done
           exit 0
