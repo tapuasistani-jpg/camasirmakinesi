@@ -74,9 +74,26 @@ jobs:
               -H "Upgrade-Insecure-Requests: 1" \
               -H "Referer: https://www.amazon.com.tr/" \
               -w '%{http_code}' -o sayfa.html "$url" || echo "000")
+            code=$(printf '%s' "$code" | tr -cd '0-9' | tail -c 3)
             if [ "$code" != "200" ]; then
-              echo "Amazon $code verdi, ${wait_hata} saniye bekleniyor."
-              sleep "$wait_hata"
+              echo "Amazon $code, 2 saniye sonra ayni sayfa tekrar."
+              sleep 2
+              code=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
+                -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+                -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
+                -H "Upgrade-Insecure-Requests: 1" \
+                -H "Referer: https://www.amazon.com.tr/" \
+                -w '%{http_code}' -o sayfa.html "$url" || echo "000")
+              code=$(printf '%s' "$code" | tr -cd '0-9' | tail -c 3)
+            fi
+            if [ "$code" != "200" ]; then
+              if [ "$code" = "403" ] || [ "$code" = "429" ] || [ "$code" = "503" ]; then
+                echo "Amazon $code verdi, ${wait_hata} saniye bekleniyor."
+                sleep "$wait_hata"
+              else
+                echo "Amazon $code verdi, 8 saniye sonra ayni sayfa."
+                sleep 8
+              fi
               continue
             fi
             jq -n --arg url "$url" --arg kind "$kind" --arg label "$label" --rawfile html sayfa.html \
@@ -104,6 +121,16 @@ jobs:
                   -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
                   -H "Referer: https://www.amazon.com.tr/" \
                   -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
+                ecode=$(printf '%s' "$ecode" | tr -cd '0-9' | tail -c 3)
+                if [ "$ecode" != "200" ]; then
+                  sleep 2
+                  ecode=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
+                    -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+                    -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
+                    -H "Referer: https://www.amazon.com.tr/" \
+                    -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
+                  ecode=$(printf '%s' "$ecode" | tr -cd '0-9' | tail -c 3)
+                fi
                 [ "$ecode" != "200" ] && continue
                 jq -n --arg url "$eurl" --arg kind "$ekind" --arg label "$elabel" --rawfile html sayfa.html \
                   '{url:$url,kind:$kind,label:$label,html:$html,quiet:true}' > gonder.json || true
