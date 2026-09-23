@@ -728,6 +728,7 @@ export async function getStatus(): Promise<Status> {
     image: row.image ? String(row.image) : null,
     price: num(row.price) ?? 0,
     listPrice: num(row.list_price),
+    highestPrice: num(row.highest_price),
     discount: num(row.discount) ?? 0,
     marketMedian: num(row.market_median),
     verdict: String(row.verdict ?? ""),

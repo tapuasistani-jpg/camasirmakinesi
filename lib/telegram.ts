@@ -1,4 +1,4 @@
-import { tl } from "@/lib/verdict";
+import { dealWhy, displayWas, readableTitle, tl } from "@/lib/verdict";
 
 export type AlertRow = {
   title?: string | null;
@@ -24,23 +24,23 @@ function money(value: number | null | undefined): string {
 
 export function formatAlert(alert: AlertRow): string {
   const price = Number(alert.price || 0);
-  const high = Number(alert.highest_price || 0);
-  const list = Number(alert.list_price || 0);
-  const was = high > price ? high : (list > price ? list : 0);
+  const was = displayWas(price, alert.highest_price ?? null, alert.list_price ?? null);
   const drop = was ? Math.round(((was - price) / was) * 100) : Math.round(Number(alert.discount || 0));
+  const market = alert.market_median != null ? Number(alert.market_median) : null;
   const head = alert.verdict === "evet" ? "EVET" : "KONTROL";
   const lines = [
     "<b>ÇAMAŞIRMAKİNESİ</b>",
     head,
     "",
-    esc(alert.title || "Ürün"),
+    esc(readableTitle(alert.title || "Ürün")),
     "",
   ];
-  if (was > price) lines.push(`${money(was)} → ${money(price)}`);
+  if (was && was > price) lines.push(`${money(was)} → ${money(price)}`);
   else lines.push(`Amazon: ${money(price)}`);
-  if (drop > 0) lines.push(`%${drop} düştü`);
-  if (alert.market_median) lines.push(`Piyasa: ${money(alert.market_median)}`);
-  if (alert.detail) lines.push("", esc(alert.detail));
+  if (drop > 0) lines.push(`%${drop}`);
+  if (market) lines.push(`Piyasa: ${money(market)}`);
+  else lines.push("Piyasa: henüz yok");
+  lines.push("", esc(dealWhy({ price, was, market, detail: alert.detail || "" })));
   lines.push("", esc(alert.url || ""));
   return lines.join("\n");
 }

@@ -10,6 +10,36 @@ export function tl(value: number): string {
   return Math.round(value).toLocaleString("tr-TR");
 }
 
+export function readableTitle(title: string): string {
+  return title
+    .replace(/([a-zışğüöç])([A-ZİŞĞÜÖÇ])/g, "$1 $2")
+    .replace(/([A-Za-zıİşŞğĞüÜöÖçÇ])(\d)/g, "$1 $2")
+    .replace(/(\d)([A-Za-zıİşŞğĞüÜöÖçÇ])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function displayWas(price: number, highest: number | null, list: number | null): number | null {
+  const opts = [highest, list].filter((value): value is number => value != null && value > price * 1.04);
+  const sane = opts.filter((value) => value <= price * 8);
+  if (!sane.length) return null;
+  return Math.max(...sane);
+}
+
+export function dealWhy(input: { price: number; was: number | null; market: number | null; detail: string }): string {
+  if (input.market && input.price < input.market) {
+    return `Piyasa ~${tl(input.market)} TL, Amazon ${tl(input.price)} TL.`;
+  }
+  if (input.market && input.price >= input.market) {
+    return `Piyasa ~${tl(input.market)} TL. Amazon buna yakın veya pahalı.`;
+  }
+  if (input.was && input.was > input.price) {
+    return `Biz ${tl(input.was)} TL görmüştük, şimdi ${tl(input.price)} TL. Piyasa henüz yok.`;
+  }
+  const first = input.detail.split(/(?<=\.)\s/)[0] || input.detail;
+  return first.slice(0, 180);
+}
+
 export function isTechDeal(title: string): boolean {
   return /iphone|ipad|macbook|imac|airpods|galaxy s|galaxy z|pixel|playstation|xbox|nintendo|switch|rtx|radeon|geforce|legion|asus rog|\brog\b|mac mini|işlemci|ekran kart|notebook|laptop/i.test(title);
 }
@@ -266,4 +296,6 @@ export function assertVerdicts(): void {
     history: [6399, 7875, 10500, 6399],
   });
   if (hike?.verdict === "evet") throw new Error("attırıp eski fiyata inen ayakkabı fırsat sayıldı");
+  if (displayWas(122, 520000, null) != null) throw new Error("520 bin sahte eski fiyat kaldı");
+  if (displayWas(46999, 71430, null) !== 71430) throw new Error("dürüst eski fiyat kaçtı");
 }

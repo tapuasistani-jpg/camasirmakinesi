@@ -157,6 +157,11 @@ button.close {
 
 .price { font-family: Consolas, monospace; font-weight: 700; }
 .old { margin-left: 6px; text-decoration: line-through; color: var(--muted); font-weight: 500; }
+.facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 4px 0 2px; }
+.facts .was { text-decoration: line-through; color: var(--muted); font-family: Consolas, monospace; }
+.facts .arrow { color: var(--muted); }
+.facts .drop { font-weight: 800; color: var(--green); }
+.market { margin: 0 0 4px; color: var(--muted); font-size: 14px; }
 .title { font-weight: 650; }
 .detail { margin: 4px 0; }
 

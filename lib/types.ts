@@ -6,6 +6,7 @@ export type AlertView = {
   image: string | null;
   price: number;
   listPrice: number | null;
+  highestPrice: number | null;
   discount: number;
   marketMedian: number | null;
   verdict: string;

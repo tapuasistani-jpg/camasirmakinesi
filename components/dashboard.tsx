@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Status } from "@/lib/types";
+import type { AlertView, Status } from "@/lib/types";
+import { dealWhy, displayWas, readableTitle } from "@/lib/verdict";
 
 const LABELS: Record<string, string> = { evet: "EVET", hayir: "HAYIR", kararsiz: "NET DEĞİL" };
 
@@ -62,6 +63,52 @@ function History({ rows }: { rows: { price: number; seenAt: string | null }[] })
 function Photo({ src }: { src: string | null }) {
   if (!src || !src.startsWith("https://")) return <span className="ph" />;
   return <img alt="" src={src} />;
+}
+
+function DealCard({
+  deal,
+  onHide,
+  onHistory,
+  onWatch,
+  history,
+}: {
+  deal: AlertView;
+  onHide: (id: number) => void;
+  onHistory?: (asin: string) => void;
+  onWatch?: (deal: AlertView) => void;
+  history?: { asin: string; rows: { price: number; seenAt: string | null }[] } | null;
+}) {
+  const was = displayWas(deal.price, deal.highestPrice, deal.listPrice);
+  const drop = was ? Math.round(((was - deal.price) / was) * 100) : Math.round(deal.discount);
+  const why = dealWhy({ price: deal.price, was, market: deal.marketMedian, detail: deal.detail });
+  return (
+    <article className="deal">
+      <Photo src={deal.image} />
+      <div>
+        <div className="deal-top">
+          <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
+          <button className="ghost close" type="button" onClick={() => onHide(deal.id)} aria-label="Kapat">×</button>
+        </div>
+        <div className="facts">
+          {was ? <span className="was">{tl(was)}</span> : null}
+          {was ? <span className="arrow">→</span> : null}
+          <span className="price">{tl(deal.price)}</span>
+          {drop > 0 ? <span className="drop">%{drop}</span> : null}
+        </div>
+        <p className="market">{deal.marketMedian ? `Piyasa ~${tl(deal.marketMedian)}` : "Piyasa henüz yok"}</p>
+        <div className="title">{readableTitle(deal.title)}</div>
+        <p className="detail">{why}</p>
+        <a href={deal.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a>
+        {onHistory || onWatch ? (
+          <div className="row-buttons">
+            {onHistory ? <button className="ghost" type="button" onClick={() => onHistory(deal.asin)}>Fiyat geçmişi</button> : null}
+            {onWatch ? <button className="ghost" type="button" onClick={() => onWatch(deal)}>Takibe al</button> : null}
+          </div>
+        ) : null}
+        {history?.asin === deal.asin ? <History rows={history.rows} /> : null}
+      </div>
+    </article>
+  );
 }
 
 export default function Dashboard() {
@@ -246,6 +293,23 @@ export default function Dashboard() {
     await load();
   }
 
+  async function followDeal(deal: AlertView) {
+    sessionStorage.setItem("camasir-admin", password);
+    const item = deal.asin || deal.title;
+    const response = await fetch("/api/watch", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ item }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      say(data.error || "Takibe alınamadı", false);
+      return;
+    }
+    say("Takibe alındı.", true);
+    await load();
+  }
+
   async function hideDeal(id: number) {
     sessionStorage.setItem("camasir-admin", password);
     await fetch("/api/alert", {
@@ -406,25 +470,14 @@ export default function Dashboard() {
               return <p className="empty">{kararHepsi ? `Henüz eşik geçen ürün yok. Sırada ${status?.pendingCount ?? 0} ürün var.` : "Henüz EVET yok. Diğer kararlar için üstteki düğmeye bas."}</p>;
             }
             return rows.map((deal) => (
-            <article className="deal" key={deal.id}>
-              <Photo src={deal.image} />
-              <div>
-                <div className="deal-top">
-                  <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
-                  <button className="ghost close" type="button" onClick={() => hideDeal(deal.id)} aria-label="Kapat">×</button>
-                </div>
-                <span className="price">%{Math.round(deal.discount)} · {tl(deal.price)}</span>
-                {deal.listPrice ? <span className="old">{tl(deal.listPrice)}</span> : null}
-                <div className="title">{deal.title}</div>
-                <p className="detail">{deal.detail}</p>
-                <a href={deal.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a>
-                <div className="row-buttons">
-                  <button className="ghost" type="button" onClick={() => showHistory(deal.asin)}>Fiyat geçmişi</button>
-                  <button className="ghost" type="button" onClick={() => { setWatchInput(deal.asin); say("Ürün kodu yazıldı, aşağıdan Takibe al'a bas.", true); }}>Takibe al</button>
-                </div>
-                {history?.asin === deal.asin ? <History rows={history.rows} /> : null}
-              </div>
-            </article>
+              <DealCard
+                key={deal.id}
+                deal={deal}
+                onHide={hideDeal}
+                onHistory={showHistory}
+                onWatch={followDeal}
+                history={history}
+              />
             ));
           })()}
         </section>
@@ -533,20 +586,7 @@ export default function Dashboard() {
 
           <h3 className="reyon-head">Reyondan çıkan fırsatlar</h3>
           {status?.aisleAlerts.length ? status.aisleAlerts.map((deal) => (
-            <article className="deal" key={`reyon-${deal.id}`}>
-              <Photo src={deal.image} />
-              <div>
-                <div className="deal-top">
-                  <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
-                  <button className="ghost close" type="button" onClick={() => hideDeal(deal.id)} aria-label="Kapat">×</button>
-                </div>
-                <span className="price">%{Math.round(deal.discount)} · {tl(deal.price)}</span>
-                {deal.listPrice ? <span className="old">{tl(deal.listPrice)}</span> : null}
-                <div className="title">{deal.title}</div>
-                <p className="detail">{deal.detail}</p>
-                <a href={deal.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a>
-              </div>
-            </article>
+            <DealCard key={`reyon-${deal.id}`} deal={deal} onHide={hideDeal} />
           )) : <p className="empty">Reyonlarda %{status?.minDiscount ?? 80} eşiğini geçen ürün çıkmadı. Çıkarsa buraya düşer ve Telegram'a gider.</p>}
 
           <h3 className="reyon-head">Reyonda görülenler</h3>
