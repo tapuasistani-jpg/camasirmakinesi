@@ -629,6 +629,10 @@ export async function writeAisle(index: number, page: number, url: string | null
   await db()`UPDATE scan_state SET aisle_index = ${index}, aisle_page = ${page}, aisle_url = ${url} WHERE id = 1`;
 }
 
+export async function touchLastScan(): Promise<void> {
+  await db()`UPDATE scan_state SET last_scan_at = NOW() WHERE id = 1`;
+}
+
 function blankStatus(message: string): Status {
   return {
     ready: false,

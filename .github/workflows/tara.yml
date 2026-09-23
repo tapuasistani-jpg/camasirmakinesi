@@ -2,7 +2,7 @@ name: Depo tara
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "*/20 * * * *"
   workflow_dispatch:
 
 concurrency:

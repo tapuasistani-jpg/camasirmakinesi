@@ -39,6 +39,7 @@ import {
   readSetting,
   readState,
   tagAisle,
+  touchLastScan,
   touchWatchHunt,
   upsertProduct,
   watchDrop,
@@ -381,6 +382,7 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
 }> {
   const html = input.html || "";
   const url = input.url || "";
+  await touchLastScan();
   let items: ProductCard[] = [];
   let blocked = false;
   if (!html || html.length < 500 || isBlocked(html)) {
