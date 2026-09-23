@@ -1,7 +1,8 @@
 import * as cheerio from "cheerio";
 
 import { USER_AGENT, parsePrice } from "@/lib/amazon";
-import { withoutEcho } from "@/lib/verdict";
+import { comparePrices } from "@/lib/compare";
+import { honestMarket } from "@/lib/verdict";
 
 const TOKEN_SOURCE =
   "(?:₺\\s*)?\\d{1,3}(?:\\.\\d{3})+(?:,\\d{2})?\\s*(?:TL|₺)|(?:₺\\s*)?\\d{2,6}(?:,\\d{2})?\\s*(?:TL|₺)|₺\\s*\\d{1,3}(?:\\.\\d{3})+(?:,\\d{2})?|₺\\s*\\d{2,6}(?:,\\d{2})?";
@@ -35,7 +36,11 @@ async function fetchText(url: string): Promise<string> {
   return response.text();
 }
 
-export async function searchPrices(title: string, amazonPrice: number): Promise<number[]> {
+export async function searchPrices(
+  title: string,
+  amazonPrice: number,
+  anchors: { list?: number | null; high?: number | null } = {},
+): Promise<number[]> {
   const encoded = encodeURIComponent(queryFrom(title));
   const prices: number[] = [];
   const ddg = await fetchText(`https://html.duckduckgo.com/html/?q=${encoded}`);
@@ -53,11 +58,19 @@ export async function searchPrices(title: string, amazonPrice: number): Promise<
       prices.push(...pricesInText(ddg));
     }
   }
-  if (withoutEcho(prices, amazonPrice).length < 2) {
+  const list = anchors.list ?? null;
+  const high = anchors.high ?? null;
+  if (honestMarket(title, amazonPrice, prices, list, high).length < 2) {
     const google = await fetchText(`https://www.google.com/search?hl=tr&gl=tr&num=10&q=${encoded}`);
     if (google && !google.slice(0, 1500).includes("consent.google")) {
       prices.push(...pricesInText(google));
     }
   }
-  return withoutEcho(prices, amazonPrice);
+  try {
+    const shops = await comparePrices(title);
+    prices.push(...shops.offers.map((offer) => offer.price));
+  } catch {
+    // Mağaza araması boş kalabilir, çizili fiyatla karar verilmez.
+  }
+  return honestMarket(title, amazonPrice, prices, list, high);
 }

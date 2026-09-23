@@ -49,7 +49,7 @@ export type Target = {
 
 const TOUR_PAGE_CAP = 200;
 const AISLE_PAGE_CAP = 40;
-const AISLE_EVERY = 4;
+const FAST_AISLES = ["Yeni Gelenler", "Günün Fırsatları"];
 
 function fingerprint(items: ProductCard[]): string {
   return items.map((item) => item.asin).sort().join(",").slice(0, 3000);
@@ -63,6 +63,10 @@ async function tourTarget(): Promise<Target> {
   if (flip && url && !/[?&](?:page|pg)=\d/.test(url) && !/sr_pg_\d/.test(url)) url = null;
   if (!url) url = flip ? elektronikPageUrl(state.page) : depoSearchUrl(query, 1);
   return { kind: "tur", label: depoQueryLabel(query), url };
+}
+
+async function fastStart(label: string): Promise<Target> {
+  return { kind: "reyon", label, url: aisleStartUrls(label)[0] };
 }
 
 async function aisleTarget(): Promise<Target> {
@@ -81,7 +85,12 @@ async function aisleTarget(): Promise<Target> {
 export async function nextTarget(): Promise<Target> {
   const turn = (Number(await readSetting("feed_turn")) || 0) + 1;
   await writeSetting("feed_turn", String(turn % 1000));
-  return turn % AISLE_EVERY === 0 ? aisleTarget() : tourTarget();
+  const slot = turn % 6;
+  // 6 turda 4 kez taze reyonun ilk sayfası. Rakipler orayı dakikada bir bakıyor.
+  if (slot === 0 || slot === 2) return fastStart(FAST_AISLES[0]);
+  if (slot === 1 || slot === 4) return fastStart(FAST_AISLES[1]);
+  if (slot === 3) return aisleTarget();
+  return tourTarget();
 }
 
 async function remember(items: ProductCard[], minDiscount: number): Promise<number> {
@@ -115,7 +124,7 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
       }
     }
     const listOff = percentOff(item.price, item.listPrice);
-    const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.highest) : 0;
+    const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.trustedHigh) : 0;
     if (Math.max(listOff, memoryOff) < minDiscount) continue;
     if (!(await needsFreshVerdict(item.asin, item.price))) continue;
     await enqueuePending(item, memory);
@@ -165,13 +174,17 @@ async function eatTour(url: string, html: string, items: ProductCard[]): Promise
   await writeState(page + 1, state.queryIndex, null, flip && more === generated ? null : more, state.queryText);
 }
 
-async function eatAisle(url: string, html: string, items: ProductCard[]): Promise<void> {
+async function eatAisle(url: string, html: string, items: ProductCard[], labelHint?: string): Promise<void> {
   const state = await readState();
-  const index = state.aisleIndex % DEPO_AISLES.length;
-  const aisle = DEPO_AISLES[index];
+  const hinted = DEPO_AISLES.find((row) => row.label === labelHint);
+  const index = hinted
+    ? DEPO_AISLES.findIndex((row) => row.label === hinted.label)
+    : state.aisleIndex % DEPO_AISLES.length;
+  const aisle = DEPO_AISLES[index] || DEPO_AISLES[0];
   const cursors = await readAisleCursors();
   const page = cursors[aisle.label]?.page || 1;
   const tryKey = `aisle_try_${aisle.label}`;
+  const fast = FAST_AISLES.includes(aisle.label);
 
   async function nextAisle(): Promise<void> {
     await writeAisleCursor(aisle.label, { page: 1, url: null });
@@ -179,7 +192,6 @@ async function eatAisle(url: string, html: string, items: ProductCard[]): Promis
   }
 
   if (!items.length) {
-    // Mağaza sayfasında kart yoksa "Tüm sonuçları gör" listesine geç.
     const node = nodeFromUrl(url);
     const deeper = seeAllResultsUrl(html)
       || (node ? nodeListingUrl(html, node) : null)
@@ -187,18 +199,23 @@ async function eatAisle(url: string, html: string, items: ProductCard[]): Promis
     if (deeper && deeper !== url) {
       await addLog("bilgi", `Reyon · ${aisle.label} ürün listesine giriliyor.`);
       await writeAisleCursor(aisle.label, { page: 1, url: deeper });
-      await writeAisle((index + 1) % DEPO_AISLES.length, 1, null);
+      if (!fast) await writeAisle((index + 1) % DEPO_AISLES.length, 1, null);
       return;
     }
     const tries = (Number(await readSetting(tryKey)) || 0) + 1;
     await writeSetting(tryKey, String(tries % aisleStartUrls(aisle.label).length));
     await addLog("uyari", `Reyon · ${aisle.label} sayfa ${page}: ürün kartı yok. ${pageSummary(html)} Başka adres denenecek.`);
-    await nextAisle();
+    if (!fast) await nextAisle();
     return;
   }
   const config = await getConfig();
   const seen = await remember(items, config.minDiscount);
   await tagAisle(items.map((item) => item.asin), aisle.label);
+  if (fast) {
+    await addLog("bilgi", `Reyon · ${aisle.label} taze sayfa: ${seen} ürün. Biraz sonra yine bakılacak.`);
+    await writeAisleCursor(aisle.label, { page: 1, url: null });
+    return;
+  }
   const more = page >= AISLE_PAGE_CAP ? null : (scrollMoreUrl(html, url) || nextSearchPage(url));
   if (!more) {
     await addLog("bilgi", `Reyon · ${aisle.label} sayfa ${page}: ${seen} ürün. Sonuna geldi, baştan bakacak.`);
@@ -210,7 +227,7 @@ async function eatAisle(url: string, html: string, items: ProductCard[]): Promis
   await writeAisle((index + 1) % DEPO_AISLES.length, page + 1, null);
 }
 
-export async function eatPage(input: { kind: string; url: string; html: string }): Promise<{
+export async function eatPage(input: { kind: string; url: string; html: string; label?: string }): Promise<{
   ok: boolean;
   blocked: boolean;
   items: number;
@@ -227,10 +244,12 @@ export async function eatPage(input: { kind: string; url: string; html: string }
     await addLog("uyari", `Sayfa okunamadı. ${pageSummary(html)}`);
   } else {
     items = parseSearchPage(html);
-    if (input.kind === "reyon") await eatAisle(url, html, items);
+    if (input.kind === "reyon") await eatAisle(url, html, items, input.label);
     else await eatTour(url, html, items);
   }
   const judged = await judgeOne();
   const sent = await sendOne();
-  return { ok: !blocked, blocked, items: items.length, judged, sent, next: await nextTarget() };
+  const extraJudged = await judgeOne();
+  const extraSent = await sendOne();
+  return { ok: !blocked, blocked, items: items.length, judged: judged + extraJudged, sent: sent + extraSent, next: await nextTarget() };
 }

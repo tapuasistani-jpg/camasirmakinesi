@@ -26,7 +26,9 @@ export function formatAlert(alert: AlertRow): string {
   const head = alert.verdict === "evet" ? "EVET — piyasadan da ucuz" : "KONTROL — indirim etiketine dikkat";
   const lines = ["<b>ÇAMAŞIRMAKİNESİ</b>", head, "", esc(alert.title || "Ürün"), "", `Amazon: ${money(alert.price)}`];
   if (alert.list_price) lines.push(`Çizili: ${money(alert.list_price)} (%${Math.round(Number(alert.discount || 0))})`);
-  if (alert.highest_price && Number(alert.highest_price) > Number(alert.price || 0)) {
+  const price = Number(alert.price || 0);
+  const high = Number(alert.highest_price || 0);
+  if (high > price && !(high >= price * 1.7)) {
     lines.push(`Hafızadaki en yüksek: ${money(alert.highest_price)}`);
   }
   if (alert.market_median) {

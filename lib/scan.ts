@@ -121,7 +121,10 @@ export async function judgeOne(): Promise<number> {
   }
   let marketPrices: number[] = [];
   try {
-    marketPrices = await searchPrices(String(pending.title ?? ""), price);
+    marketPrices = await searchPrices(String(pending.title ?? ""), price, {
+      list: listPrice,
+      high: highest,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "arama bozuldu";
     await addLog("uyari", `Piyasa araması bozuldu: ${message}`);
@@ -134,6 +137,8 @@ export async function judgeOne(): Promise<number> {
     samples,
     marketPrices,
     threshold: config.minDiscount,
+    title: String(pending.title ?? ""),
+    history: highest != null ? [highest, price] : [price],
   });
   await dropPending(asin);
   if (!verdict) return 0;
@@ -236,7 +241,7 @@ export async function scanOnce(onlyRaw?: string) {
       const memory = await upsertProduct(item);
       count += 1;
       const listOff = percentOff(item.price, item.listPrice);
-      const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.highest) : 0;
+      const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.trustedHigh) : 0;
       if (Math.max(listOff, memoryOff) < config.minDiscount) continue;
       if (!(await needsFreshVerdict(item.asin, item.price))) continue;
       await enqueuePending(item, memory);

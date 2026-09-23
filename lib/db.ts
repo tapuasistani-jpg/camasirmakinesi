@@ -3,7 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
-import type { Verdict } from "@/lib/verdict";
+import { realSaleHigh, type Verdict } from "@/lib/verdict";
 
 type Sql = ReturnType<typeof neon>;
 type Row = Record<string, unknown>;
@@ -298,7 +298,7 @@ export async function addLog(level: string, message: string): Promise<void> {
   console.log(`[${level}] ${message}`);
 }
 
-export async function upsertProduct(item: ProductCard): Promise<{ highest: number; samples: number; inserted: boolean }> {
+export async function upsertProduct(item: ProductCard): Promise<{ highest: number; samples: number; inserted: boolean; trustedHigh: number | null }> {
   const sql = db();
   const existing = (await sql`SELECT * FROM products WHERE asin = ${item.asin}`) as Row[];
   if (!existing.length) {
@@ -309,7 +309,7 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
       ${item.price}, ${item.listPrice}, ${item.price}, ${item.price}, NOW(), NOW()
     )`;
     await sql`INSERT INTO price_points (asin, price, list_price) VALUES (${item.asin}, ${item.price}, ${item.listPrice})`;
-    return { highest: item.price, samples: 1, inserted: true };
+    return { highest: item.price, samples: 1, inserted: true, trustedHigh: item.price };
   }
   const row = existing[0];
   const previous = num(row.last_price) ?? item.price;
@@ -335,7 +335,9 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
     await sql`INSERT INTO price_points (asin, price, list_price) VALUES (${item.asin}, ${item.price}, ${listPrice})`;
   }
   const count = (await sql`SELECT COUNT(*)::int AS n FROM price_points WHERE asin = ${item.asin}`) as Row[];
-  return { highest, samples: num(count[0]?.n) ?? 1, inserted };
+  const points = (await sql`SELECT price FROM price_points WHERE asin = ${item.asin}`) as Row[];
+  const trustedHigh = realSaleHigh(points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0));
+  return { highest, samples: num(count[0]?.n) ?? 1, inserted, trustedHigh };
 }
 
 export async function needsFreshVerdict(asin: string, price: number): Promise<boolean> {
@@ -364,7 +366,7 @@ export async function enqueuePending(item: ProductCard, memory: { highest: numbe
 }
 
 export async function takePending(): Promise<Row | null> {
-  const rows = (await db()`SELECT * FROM pending ORDER BY created_at ASC LIMIT 1`) as Row[];
+  const rows = (await db()`SELECT * FROM pending ORDER BY created_at DESC LIMIT 1`) as Row[];
   return rows[0] ?? null;
 }
 
@@ -493,6 +495,9 @@ async function dropFakeUnitDeals(): Promise<void> {
     if (!fakeListPrice(String(row.title ?? ""), Number(row.last_price), num(row.list_price))) continue;
     await sql`UPDATE products SET list_price = NULL WHERE asin = ${String(row.asin)}`;
   }
+  // Piyasadan eşiğin altında kalan sahte EVET'leri sil. 4'lü Pepsi 139 / tek 42×4=168 gibi.
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND market_median IS NOT NULL AND price > market_median * 0.55 AND detail NOT LIKE 'Takip%'`;
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%'`;
 }
 
 export async function getStatus(): Promise<Status> {
