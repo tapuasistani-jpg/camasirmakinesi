@@ -142,6 +142,10 @@ export async function addWatch(asin: string, targetPrice: number | null): Promis
     ON CONFLICT (asin) DO UPDATE SET target_price = EXCLUDED.target_price`;
 }
 
+export async function removeWatch(asin: string): Promise<void> {
+  await db()`DELETE FROM watch WHERE asin = ${asin}`;
+}
+
 export async function addWatchQuery(query: string, targetPrice: number | null): Promise<void> {
   const name = query.replace(/\s+/g, " ").trim().slice(0, 120);
   if (name.length < 3) throw new Error("ürün adını biraz daha uzun yaz");
