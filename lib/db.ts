@@ -126,6 +126,7 @@ async function migrate(): Promise<void> {
   )`;
   await sql`ALTER TABLE watch ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION`;
   await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION`;
+  await sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS dismissed INT NOT NULL DEFAULT 0`;
 }
 
 export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
@@ -455,6 +456,13 @@ export async function insertAlert(input: {
   )`;
 }
 
+export async function hideAlert(id: number): Promise<void> {
+  if (!Number.isFinite(id) || id <= 0) return;
+  await db()`UPDATE alerts SET dismissed = 1
+    WHERE asin = (SELECT asin FROM alerts WHERE id = ${id})
+       OR id = ${id}`;
+}
+
 export async function nextUnsent(): Promise<Row | null> {
   const rows = (await db()`SELECT * FROM alerts WHERE wants_notify = 1 AND notified = 0 ORDER BY id ASC LIMIT 1`) as Row[];
   return rows[0] ?? null;
@@ -565,8 +573,8 @@ export async function getStatus(): Promise<Status> {
   const state = await readState();
   const query = state.queryText || DEPO_QUERIES[state.queryIndex % DEPO_QUERIES.length] || "";
   const products = (await sql`SELECT COUNT(*)::int AS n FROM products`) as Row[];
-  const deals = (await sql`SELECT COUNT(*)::int AS n FROM alerts WHERE verdict = 'evet'`) as Row[];
-  const alerts = (await sql`SELECT * FROM alerts ORDER BY id DESC LIMIT 40`) as Row[];
+  const deals = (await sql`SELECT COUNT(*)::int AS n FROM alerts WHERE verdict = 'evet' AND COALESCE(dismissed, 0) = 0`) as Row[];
+  const alerts = (await sql`SELECT * FROM alerts WHERE COALESCE(dismissed, 0) = 0 ORDER BY id DESC LIMIT 40`) as Row[];
   const recent = (await sql`SELECT asin, title, url, image, last_price, list_price FROM products ORDER BY last_seen DESC LIMIT 8`) as Row[];
   const logs = (await sql`SELECT level, message, created_at FROM scan_log ORDER BY id DESC LIMIT 40`) as Row[];
   const aisle = DEPO_AISLES[state.aisleIndex % DEPO_AISLES.length] ?? DEPO_AISLES[0];
@@ -576,6 +584,7 @@ export async function getStatus(): Promise<Status> {
     FROM products WHERE aisle IS NOT NULL ORDER BY aisle_seen DESC NULLS LAST LIMIT 12`) as Row[];
   const aisleAlerts = (await sql`SELECT a.* FROM alerts a
     JOIN products p ON p.asin = a.asin AND p.aisle IS NOT NULL
+    WHERE COALESCE(a.dismissed, 0) = 0
     ORDER BY a.id DESC LIMIT 20`) as Row[];
   const alertView = (row: Row) => ({
     id: num(row.id) ?? 0,

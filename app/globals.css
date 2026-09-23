@@ -119,6 +119,20 @@ main {
   border-top: 1px solid rgba(28, 25, 21, 0.15);
 }
 
+.deal-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+button.close {
+  padding: 0 8px;
+  line-height: 1;
+  font-size: 22px;
+  min-width: 32px;
+}
+
 .deal img, .recent-item img, .ph {
   width: 72px;
   height: 72px;

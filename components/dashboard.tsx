@@ -224,6 +224,16 @@ export default function Dashboard() {
     await load();
   }
 
+  async function hideDeal(id: number) {
+    sessionStorage.setItem("camasir-admin", password);
+    await fetch("/api/alert", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ id }),
+    });
+    await load();
+  }
+
   async function showHistory(asin: string) {
     if (history?.asin === asin) {
       setHistory(null);
@@ -369,7 +379,10 @@ export default function Dashboard() {
             <article className="deal" key={deal.id}>
               <Photo src={deal.image} />
               <div>
-                <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
+                <div className="deal-top">
+                  <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
+                  <button className="ghost close" type="button" onClick={() => hideDeal(deal.id)} aria-label="Kapat">×</button>
+                </div>
                 <span className="price">%{Math.round(deal.discount)} · {tl(deal.price)}</span>
                 {deal.listPrice ? <span className="old">{tl(deal.listPrice)}</span> : null}
                 <div className="title">{deal.title}</div>
@@ -492,7 +505,10 @@ export default function Dashboard() {
             <article className="deal" key={`reyon-${deal.id}`}>
               <Photo src={deal.image} />
               <div>
-                <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
+                <div className="deal-top">
+                  <span className={`badge ${deal.verdict}`}>{LABELS[deal.verdict] || deal.verdict}</span>
+                  <button className="ghost close" type="button" onClick={() => hideDeal(deal.id)} aria-label="Kapat">×</button>
+                </div>
                 <span className="price">%{Math.round(deal.discount)} · {tl(deal.price)}</span>
                 {deal.listPrice ? <span className="old">{tl(deal.listPrice)}</span> : null}
                 <div className="title">{deal.title}</div>
