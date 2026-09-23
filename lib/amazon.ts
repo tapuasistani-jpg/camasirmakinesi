@@ -693,7 +693,7 @@ function jsonField(html: string, key: string): string {
   return match?.[1] || "";
 }
 
-function priceFromBox(root: { find(selector: string): { first(): { text(): string } } }): number | null {
+function priceFromBox(root: { find(selector: string): { first(): { text(): string }; text(): string } }): number | null {
   return parsePrice(root.find("span.a-price:not(.a-text-price) span.a-offscreen").first().text())
     || parsePrice(root.find("#price_inside_buybox").text())
     || parsePrice(root.find("#corePrice_feature_div span.a-offscreen").first().text());
