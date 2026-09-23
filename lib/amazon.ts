@@ -45,15 +45,39 @@ export function nameSearchUrl(query: string, depo: boolean): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
-const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|stand|kılıfı|\bcase\b|\bcover\b|charger/i;
+const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|stand|kılıfı|\bcase\b|\bcover\b|charger|klavye|1 arada|aksesuar/i;
+
+function fold(text: string): string {
+  return text
+    .toLocaleLowerCase("tr-TR")
+    .replace(/ı/g, "i")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .replace(/i̇/g, "i");
+}
+
+function tokenIn(hay: string, token: string): boolean {
+  if (hay.includes(token)) return true;
+  if (token === "ps5" && hay.includes("playstation 5")) return true;
+  if (token === "ps4" && hay.includes("playstation 4")) return true;
+  if (token === "rtx" && (hay.includes("geforce") || hay.includes("rtx"))) return true;
+  return false;
+}
+
+export function isAccessory(title: string): boolean {
+  return ACCESSORY.test(title);
+}
 
 export function titleFits(title: string, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase("tr-TR");
-  const hay = title.trim().toLocaleLowerCase("tr-TR");
+  const needle = fold(query);
+  const hay = fold(title);
   if (!needle || !hay) return false;
   const tokens = needle.split(/[^\p{L}\p{N}]+/u).filter((token) => token.length >= 2);
-  if (!tokens.length || tokens.some((token) => !hay.includes(token))) return false;
-  if (!ACCESSORY.test(needle) && ACCESSORY.test(hay)) return false;
+  if (!tokens.length || tokens.some((token) => !tokenIn(hay, token))) return false;
+  if (!isAccessory(query) && isAccessory(title)) return false;
   return true;
 }
 
@@ -347,9 +371,12 @@ export function nextSearchPage(currentUrl: string): string | null {
 function looseTl(card: { clone(): { find(selector: string): { remove(): void }; text(): string } }): number | null {
   const copy = card.clone();
   copy.find(".a-text-price").remove();
-  const match = copy.text().replace(/\u00a0/g, " ").match(/(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})\s*TL/i);
-  if (!match) return null;
-  return parsePrice(`${match[1]},${match[2]} TL`);
+  const text = copy.text().replace(/\u00a0/g, " ");
+  const withKurus = text.match(/(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})\s*TL/i);
+  if (withKurus) return parsePrice(`${withKurus[1]},${withKurus[2]} TL`);
+  const whole = text.match(/(\d{1,3}(?:\.\d{3})+)\s*TL/i);
+  if (whole) return parsePrice(`${whole[1]},00 TL`);
+  return null;
 }
 
 const SEE_ALL = /tüm sonuçları gör|tümünü gör|sonuçların tümünü|see all results/i;
@@ -536,9 +563,12 @@ export function parseSearchPage(html: string): ProductCard[] {
     const asin = (card.attr("data-asin") || "").trim().toUpperCase();
     if (!/^[A-Z0-9]{10}$/.test(asin) || seen.has(asin)) return;
     const title = clean(
-      card.find("h2 span").first().text()
+      card.find("h2").first().attr("aria-label")
+      || card.find("h2 span").first().text()
+      || card.find("h2 a").first().text()
       || card.find("h2").first().text()
       || card.find("a.a-link-normal span").first().text()
+      || card.find("img.s-image").first().attr("alt")
       || card.find("img").first().attr("alt")
       || "",
     );
@@ -728,6 +758,8 @@ export function assertAmazonParser(): void {
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
   if (!titleFits("Apple iPhone 17 Pro Max 256 GB", "iPhone 17 Pro Max")) throw new Error("telefon ismi eşleşmedi");
+  if (!titleFits("APPLE IPHONE 17 PRO MAX", "iPhone 17 Pro Max")) throw new Error("büyük harf iPhone kaçtı");
+  if (!titleFits("Sony PlayStation 5 Pro Konsol", "PS5 Pro")) throw new Error("PS5 adı eşleşmedi");
   if (titleFits("iPhone 17 Pro Max Silikon Kılıf", "iPhone 17 Pro Max")) throw new Error("kılıf telefon sandı");
   if (titleFits("Apple iPhone 16 Pro Max", "iPhone 17 Pro Max")) throw new Error("başka nesil telefon sandı");
 }

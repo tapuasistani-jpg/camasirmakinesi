@@ -7,6 +7,7 @@ import {
   depoQueryLabel,
   depoSearchUrl,
   elektronikPageUrl,
+  isAccessory,
   isBlocked,
   keywordAisleUrl,
   nameSearchUrl,
@@ -183,13 +184,20 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
   return count;
 }
 
+function huntMatches(items: ProductCard[], query: string): ProductCard[] {
+  const tight = items.filter((item) => titleFits(item.title, query));
+  if (tight.length) return tight;
+  // Amazon zaten bu isimle aradı. Başlık biraz farklıysa kılıf olmayan kartları al.
+  return items.filter((item) => !isAccessory(item.title) || isAccessory(query));
+}
+
 async function eatHunt(label: string, html: string, items: ProductCard[]): Promise<void> {
-  const matches = items.filter((item) => titleFits(item.title, label));
+  const matches = huntMatches(items, label);
   const config = await getConfig();
   if (matches.length) await remember(matches, config.minDiscount);
   const cheapest = matches.reduce((best: ProductCard | null, item) => (!best || item.price < best.price ? item : best), null);
   if (!cheapest) {
-    await addLog("uyari", `Takip · "${label}" aramasında uygun ürün yok. ${pageSummary(html)}`);
+    await addLog("uyari", `Takip · "${label}" ${items.length} ürün okundu, uygun yok. ${pageSummary(html)}`);
     return;
   }
   await addLog("bilgi", `Takip · "${label}" en ucuz satıcı ${Math.round(cheapest.price)} TL · ${matches.length} ilan.`);
