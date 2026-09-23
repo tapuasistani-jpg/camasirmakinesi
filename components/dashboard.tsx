@@ -385,36 +385,6 @@ export default function Dashboard() {
           )) : <p className="empty">Henüz %{status?.minDiscount ?? 50} eşiğini geçen ürün yok. Sırada bekleyen {status?.pendingCount ?? 0} ürün var.</p>}
         </section>
 
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Takip listem</h2>
-            <p>Ürün adını yaz. Fiyatı kaydeder, sitedeki eşik kadar (%{status?.minDiscount ?? 50}) düşünce Telegram'a yazar. Hedef yazmana gerek yok.</p>
-          </div>
-          <form onSubmit={watchAdd} className="watch-form">
-            <label>Ürün adı veya link
-              <input type="text" value={watchInput} placeholder="örnek: iPhone 17 Pro Max" onChange={(event) => setWatchInput(event.target.value)} />
-            </label>
-            <button type="submit">Takibe al</button>
-          </form>
-          {status?.watch.length ? status.watch.map((item) => (
-            <article className="recent-item" key={item.query || item.asin}>
-              <Photo src={item.image} />
-              <div>
-                <div className="title">{item.title || item.query || item.asin}</div>
-                {item.query ? <span className="detail">tüm satıcılar · {item.query}</span> : null}
-                <span className="price">{tl(item.price)}</span>
-                {item.basePrice ? <span className="old">görülen en düşük {tl(item.basePrice)}</span> : null}
-                <div className="row-buttons">
-                  {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a> : null}
-                  {item.asin ? <button className="ghost" type="button" onClick={() => showHistory(item.asin)}>Fiyat geçmişi</button> : null}
-                  <button className="ghost" type="button" onClick={() => watchDrop(item.query || item.asin)}>Çıkar</button>
-                </div>
-                {history?.asin === item.asin ? <History rows={history.rows} /> : null}
-              </div>
-            </article>
-          )) : <p className="empty">Takip listen boş.</p>}
-        </section>
-
         <aside>
           <section className="panel">
             <h2>Telegram</h2>
@@ -478,7 +448,31 @@ export default function Dashboard() {
             )) : <p className="empty">Henüz ürün yok.</p>}
           </section>
         </aside>
-      </main></> : null}
+      </main>
+      <section className="panel log-panel">
+        <div className="panel-head">
+          <h2>Takip listem</h2>
+          <p>Ürün adını yaz. Fiyatı kaydeder, sitedeki eşik kadar (%{status?.minDiscount ?? 50}) düşünce Telegram'a yazar. Hedef yazmana gerek yok.</p>
+        </div>
+        <form onSubmit={watchAdd} className="watch-form">
+          <label>Ürün adı veya link
+            <input type="text" value={watchInput} placeholder="örnek: iPhone 17 Pro Max" onChange={(event) => setWatchInput(event.target.value)} />
+          </label>
+          <button type="submit">Takibe al</button>
+        </form>
+        {status?.watch.length ? (
+          <div className="watch-grid">
+            {status.watch.map((item) => (
+              <article className="watch-chip" key={item.query || item.asin}>
+                <div className="title">{item.title || item.query || item.asin}</div>
+                <span className="price">{item.price ? tl(item.price) : "bekleniyor"}</span>
+                <button className="ghost" type="button" onClick={() => watchDrop(item.query || item.asin)}>Çıkar</button>
+              </article>
+            ))}
+          </div>
+        ) : <p className="empty">Takip listen boş.</p>}
+      </section>
+      </> : null}
 
       {screen === "reyon" ? (
         <section className="panel log-panel">

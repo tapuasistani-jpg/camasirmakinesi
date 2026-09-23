@@ -185,7 +185,38 @@ input[type="text"], input[type="password"], input[type="number"], select {
 
 .row-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
 .row-buttons button { padding: 4px 8px; font-size: 14px; }
-.watch-form { grid-template-columns: 2fr 1fr auto; align-items: end; gap: 8px; }
+.watch-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 8px;
+}
+.watch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+.watch-chip {
+  border: 2px solid var(--line);
+  background: white;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+}
+.watch-chip .title {
+  grid-column: 1 / -1;
+  font-size: 14px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.watch-chip .price { font-weight: 700; }
+.watch-chip button { padding: 2px 8px; font-size: 13px; }
 .history { list-style: none; margin: 8px 0 0; padding: 0; }
 .history li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; font-size: 14px; }
 .history .bar { height: 10px; background: var(--ink); opacity: 0.25; }
@@ -197,7 +228,7 @@ input[type="text"], input[type="password"], input[type="number"], select {
 .empty { color: var(--muted); }
 
 @media (max-width: 860px) {
-  header, main, .stats, .lookup form, .reyon-list, .reyon-items, .watch-form { display: grid; grid-template-columns: 1fr; }
+  header, main, .stats, .lookup form, .reyon-list, .reyon-items, .watch-form, .watch-grid { display: grid; grid-template-columns: 1fr; }
   h1 { font-size: 32px; }
   .stats { grid-template-columns: 1fr 1fr; }
 }
