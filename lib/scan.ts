@@ -73,14 +73,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function retractBak(asin: string): Promise<void> {
-  const ids = await closeBak(asin);
-  if (!ids.length) return;
+async function retractBak(asin: string, mode: "iptal" | "birak"): Promise<void> {
+  const rows = await closeBak(asin);
+  if (mode === "birak" || !rows.length) return;
   const config = await getConfig();
   if (!config.token || !config.chatId) return;
-  for (const id of ids) {
+  for (const row of rows) {
     try {
-      await deleteMessage(config.token, config.chatId, id);
+      await deleteMessage(config.token, config.chatId, row.telegramId);
     } catch {
       /* mesaj zaten yok */
     }
@@ -119,7 +119,7 @@ export async function judgeOne(): Promise<number> {
   const deep = deepMemoryDeal(memoryOff, samples, config.minDiscount);
   const maxTries = deep ? 3 : 2;
   if (tries >= maxTries) {
-    await retractBak(asin);
+    await retractBak(asin, "iptal");
     await insertAlert({
       asin,
       title,
@@ -165,10 +165,10 @@ export async function judgeOne(): Promise<number> {
   });
   await dropPending(asin);
   if (!verdict) {
-    await retractBak(asin);
+    await retractBak(asin, "iptal");
     return 0;
   }
-  await retractBak(asin);
+  await retractBak(asin, verdict.verdict === "evet" ? "birak" : "iptal");
   const notify = verdict.verdict === "evet" || (verdict.verdict === "hayir" && config.notifySuspicious);
   await insertAlert({
     asin,

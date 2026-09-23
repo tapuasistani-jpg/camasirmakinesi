@@ -624,13 +624,18 @@ export async function openBak(item: ProductCard, highest: number | null): Promis
   return true;
 }
 
-export async function closeBak(asin: string): Promise<number[]> {
-  const rows = (await db()`SELECT telegram_id FROM alerts
+export async function closeBak(asin: string): Promise<{ telegramId: number; title: string; url: string; price: number }[]> {
+  const rows = (await db()`SELECT telegram_id, title, url, price FROM alerts
     WHERE asin = ${asin} AND verdict = 'bak' AND COALESCE(dismissed, 0) = 0`) as Row[];
   await db()`UPDATE alerts SET dismissed = 1 WHERE asin = ${asin} AND verdict = 'bak'`;
   return rows
-    .map((row) => Number(row.telegram_id))
-    .filter((id) => Number.isFinite(id) && id > 0);
+    .map((row) => ({
+      telegramId: Number(row.telegram_id),
+      title: String(row.title ?? ""),
+      url: String(row.url ?? ""),
+      price: num(row.price) ?? 0,
+    }))
+    .filter((row) => Number.isFinite(row.telegramId) && row.telegramId > 0);
 }
 
 export async function countProducts(): Promise<number> {

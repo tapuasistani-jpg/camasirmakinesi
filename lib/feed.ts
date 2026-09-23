@@ -160,7 +160,7 @@ export async function nextTarget(): Promise<Target> {
   if (slot === 0) return recheckTarget();
   if (slot === 1) return huntTarget();
   if (slot === 2) return fastStart("Yeni Gelenler");
-  if (slot === 3) return aisleByLabel("Çok Al Az Öde");
+  if (slot === 3) return tourTarget();
   if (slot === 4) return tourTarget();
   if (slot === 5) return aisleByLabel("Outlet");
   if (slot === 6) return fastStart("Günün Fırsatları");
