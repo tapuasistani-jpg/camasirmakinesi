@@ -374,7 +374,7 @@ export default function Dashboard() {
         <section className="panel">
           <div className="panel-head">
             <h2>Kararlar</h2>
-            <p>10 bin TL üstünde %{20}, altında %{status?.minDiscount ?? 50}. Varsayılan yalnız EVET.</p>
+            <p>Telefon, PC, ekran kartında 10 bin üstü %{20}. Diğerinde %{status?.minDiscount ?? 50}. Varsayılan yalnız EVET.</p>
             <button className="ghost" type="button" onClick={() => setKararHepsi(!kararHepsi)}>
               {kararHepsi ? "Yalnız EVET göster" : "HAYIR ve NET DEĞİL de göster"}
             </button>
@@ -475,7 +475,7 @@ export default function Dashboard() {
       <section className="panel log-panel">
         <div className="panel-head">
           <h2>Takip listem</h2>
-          <p>Ürün adını yaz. 10 bin üstü %20, altı %{status?.minDiscount ?? 50} düşünce yazar. Turda üç isim birden aranır.</p>
+          <p>Ürün adını yaz. Telefon/PC/GPU 10 bin üstü %20, diğerinde %{status?.minDiscount ?? 50} düşünce yazar.</p>
         </div>
         <form onSubmit={watchAdd} className="watch-form">
           <label>Ürün adı veya link

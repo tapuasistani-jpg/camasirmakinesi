@@ -24,7 +24,7 @@ import {
 } from "@/lib/db";
 import { searchPrices } from "@/lib/market";
 import { formatAlert, sendMessage } from "@/lib/telegram";
-import { dealThreshold, decide, percentOff } from "@/lib/verdict";
+import { dealThreshold, decide, deepMemoryDeal, percentOff } from "@/lib/verdict";
 
 const BROWSER_HEADERS = {
   "User-Agent": USER_AGENT,
@@ -98,19 +98,22 @@ export async function judgeOne(): Promise<number> {
   const highest = pending.highest_price == null ? null : Number(pending.highest_price);
   const samples = Number(pending.samples ?? 1);
   const config = await getConfig();
-  if (tries >= 3) {
-    const memoryOff = percentOff(price, highest);
-    const memoryHit = samples >= 2 && memoryOff >= dealThreshold(highest || price, config.minDiscount);
+  const title = String(pending.title ?? "");
+  const gate = dealThreshold(highest || price, config.minDiscount, title);
+  const memoryOff = percentOff(price, highest);
+  const deep = deepMemoryDeal(memoryOff, samples, config.minDiscount);
+  const maxTries = deep ? 3 : 2;
+  if (tries >= maxTries) {
     await insertAlert({
       asin,
-      title: String(pending.title ?? ""),
+      title,
       url: String(pending.url ?? ""),
       image: pending.image ? String(pending.image) : null,
       price,
       listPrice,
       highestPrice: highest,
-      notify: memoryHit,
-      verdict: memoryHit
+      notify: deep,
+      verdict: deep
         ? {
           verdict: "evet",
           discount: Math.round(memoryOff * 10) / 10,
@@ -123,7 +126,7 @@ export async function judgeOne(): Promise<number> {
           discount: Math.round(percentOff(price, listPrice) * 10) / 10,
           marketMedian: null,
           marketSamples: 0,
-          detail: "Net değil. Piyasa araması üç kez sonuç vermedi.",
+          detail: "Net değil. Piyasa araması sonuç vermedi, hafıza tek başına yetmedi.",
         },
     });
     await dropPending(asin);
@@ -131,7 +134,7 @@ export async function judgeOne(): Promise<number> {
   }
   let marketPrices: number[] = [];
   try {
-    marketPrices = await searchPrices(String(pending.title ?? ""), price, {
+    marketPrices = await searchPrices(title, price, {
       list: listPrice,
       high: highest,
     });
@@ -146,8 +149,8 @@ export async function judgeOne(): Promise<number> {
     highestPrice: highest,
     samples,
     marketPrices,
-    threshold: dealThreshold(highest || price, config.minDiscount),
-    title: String(pending.title ?? ""),
+    threshold: gate,
+    title,
     history: highest != null ? [highest, price] : [price],
   });
   await dropPending(asin);
@@ -252,7 +255,7 @@ export async function scanOnce(onlyRaw?: string) {
       count += 1;
       const listOff = percentOff(item.price, item.listPrice);
       const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.trustedHigh) : 0;
-      if (Math.max(listOff, memoryOff) < dealThreshold(memory.trustedHigh || item.price, config.minDiscount)) continue;
+      if (Math.max(listOff, memoryOff) < dealThreshold(memory.trustedHigh || item.price, config.minDiscount, item.title)) continue;
       if (!(await needsFreshVerdict(item.asin, item.price))) continue;
       await enqueuePending(item, memory);
     }

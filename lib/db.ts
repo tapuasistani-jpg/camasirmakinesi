@@ -198,7 +198,7 @@ export async function applyWatchHunt(query: string, item: ProductCard): Promise<
   const prevHigh = num(rows[0].highest_price) ?? num(rows[0].cheapest_price);
   const seenHigh = num(rows[0].high_samples) ?? 0;
   const config = await getConfig();
-  const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount) : config.minDiscount;
+  const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount, item.title) : config.minDiscount;
   const drop = prevHigh != null ? percentOff(item.price, prevHigh) : 0;
   const confirmed = seenHigh >= 2;
   const hit = drop >= gate && confirmed;
@@ -232,7 +232,7 @@ export async function watchDrop(item: ProductCard): Promise<{ hit: boolean; base
   const prevHigh = num(rows[0].highest_price) ?? num(rows[0].base_price);
   const seenHigh = num(rows[0].high_samples) ?? 0;
   const config = await getConfig();
-  const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount) : config.minDiscount;
+  const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount, item.title) : config.minDiscount;
   const drop = prevHigh != null ? percentOff(item.price, prevHigh) : 0;
   const hit = drop >= gate && seenHigh >= 2;
   const adoptCheap = drop >= gate && seenHigh < 2;
@@ -473,7 +473,8 @@ export async function seedWatchAsin(query: string, item: { asin: string; title: 
     WHERE query = ${query} AND (cheapest_price IS NULL OR cheapest_price <= 0)`;
 }
 
-export async function nextRecheck(): Promise<{ asin: string; title: string; url: string } | null> {
+export async function nextRechecks(limit = 3): Promise<{ asin: string; title: string; url: string }[]> {
+  const take = Math.max(1, Math.min(limit, 5));
   const missing = (await db()`
     SELECT q.cheapest_asin AS asin, COALESCE(NULLIF(q.title, ''), q.query) AS title, q.url
     FROM watch_query q
@@ -482,34 +483,49 @@ export async function nextRecheck(): Promise<{ asin: string; title: string; url:
       AND (q.cheapest_price IS NULL OR q.cheapest_price <= 0)
       AND (p.last_seen IS NULL OR p.last_seen < NOW() - INTERVAL '2 hours')
     ORDER BY q.added_at ASC
-    LIMIT 1
+    LIMIT ${take}
   `) as Row[];
-  if (missing[0]?.asin) {
-    const asin = String(missing[0].asin);
-    return {
+  const found: { asin: string; title: string; url: string }[] = [];
+  const seen = new Set<string>();
+  for (const row of missing) {
+    const asin = String(row.asin ?? "");
+    if (!asin || seen.has(asin)) continue;
+    seen.add(asin);
+    found.push({
       asin,
-      title: String(missing[0].title ?? ""),
-      url: String(missing[0].url || `https://www.amazon.com.tr/dp/${asin}`),
-    };
+      title: String(row.title ?? ""),
+      url: String(row.url || `https://www.amazon.com.tr/dp/${asin}`),
+    });
   }
+  if (found.length >= take) return found;
   const rows = (await db()`
     SELECT p.asin, p.title, p.url, p.last_price
     FROM products p
     LEFT JOIN watch w ON w.asin = p.asin
     LEFT JOIN watch_query q ON q.cheapest_asin = p.asin
     WHERE p.last_price > 0
-      AND p.last_seen < NOW() - INTERVAL '10 minutes'
       AND p.last_seen > NOW() - INTERVAL '5 days'
+      AND (
+        ((w.asin IS NOT NULL OR q.query IS NOT NULL OR p.last_price >= 10000)
+          AND p.last_seen < NOW() - INTERVAL '4 minutes')
+        OR
+        (w.asin IS NULL AND q.query IS NULL AND p.last_price < 10000
+          AND p.last_seen < NOW() - INTERVAL '12 minutes')
+      )
     ORDER BY
       CASE WHEN w.asin IS NOT NULL OR q.query IS NOT NULL THEN 0 ELSE 1 END,
       CASE WHEN p.last_price >= 10000 THEN 0 ELSE 1 END,
       p.last_seen ASC
-    LIMIT 1
+    LIMIT ${take}
   `) as Row[];
-  const row = rows[0];
-  if (!row) return null;
-  const asin = String(row.asin);
-  return { asin, title: String(row.title ?? ""), url: `https://www.amazon.com.tr/dp/${asin}` };
+  for (const row of rows) {
+    const asin = String(row.asin);
+    if (seen.has(asin)) continue;
+    seen.add(asin);
+    found.push({ asin, title: String(row.title ?? ""), url: `https://www.amazon.com.tr/dp/${asin}` });
+    if (found.length >= take) break;
+  }
+  return found;
 }
 
 export async function bumpPending(asin: string): Promise<number> {

@@ -33,7 +33,7 @@ import {
   insertAlert,
   listWatchQueries,
   needsFreshVerdict,
-  nextRecheck,
+  nextRechecks,
   readAisleCursors,
   seedWatchAsin,
   readSetting,
@@ -50,7 +50,7 @@ import {
 } from "@/lib/db";
 import { judgeOne, sendOne } from "@/lib/scan";
 import { searchPrices } from "@/lib/market";
-import { dealThreshold, decide, percentOff } from "@/lib/verdict";
+import { dealThreshold, decide, deepMemoryDeal, percentOff } from "@/lib/verdict";
 
 // GitHub tarafı sayfayı indirir, burası sadece okur ve sıradaki adresi söyler.
 export type Target = {
@@ -129,9 +129,16 @@ async function huntTarget(): Promise<Target> {
 }
 
 async function recheckTarget(): Promise<Target> {
-  const item = await nextRecheck();
-  if (!item) return tourTarget();
-  return { kind: "urun", label: item.title.slice(0, 50) || item.asin, url: item.url };
+  const batch = await nextRechecks(3);
+  if (!batch.length) return tourTarget();
+  const pack = batch.map((item) => ({
+    kind: "urun" as const,
+    label: item.title.slice(0, 50) || item.asin,
+    url: item.url,
+  }));
+  const main = pack[0];
+  main.extra = pack.slice(1);
+  return main;
 }
 
 export async function nextTarget(): Promise<Target> {
@@ -169,7 +176,7 @@ async function pingHunts(items: ProductCard[]): Promise<void> {
       highestPrice: drop.base,
       samples: 3,
       marketPrices,
-      threshold: dealThreshold(drop.base, (await getConfig()).minDiscount),
+      threshold: dealThreshold(drop.base, (await getConfig()).minDiscount, cheapest.title),
       title: cheapest.title,
       history: [drop.base, cheapest.price],
     });
@@ -200,34 +207,16 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
     count += 1;
     if (watched.has(item.asin)) {
       const drop = await watchDrop(item);
-      if (drop.hit) {
-        const reference = drop.target && item.price <= drop.target ? drop.target : drop.base;
-        await insertAlert({
-          asin: item.asin,
-          title: item.title,
-          url: item.url,
-          image: item.image,
-          price: item.price,
-          listPrice: item.listPrice,
-          highestPrice: memory.highest,
-          notify: true,
-          verdict: {
-            verdict: "evet",
-            discount: Math.round(percentOff(item.price, reference ?? memory.highest) * 10) / 10,
-            marketMedian: null,
-            marketSamples: 0,
-            detail: `Takip listendeki ürün eşiğin üstünde düştü. Şimdi ${Math.round(item.price)} TL.`,
-          },
-        });
-        await addLog("bilgi", `Takip: ${item.title.slice(0, 70)} düştü.`);
+      if (drop.hit && drop.base) {
+        await enqueuePending(item, { highest: drop.base, samples: 3 }, 2);
       }
     }
     const listOff = percentOff(item.price, item.listPrice);
     const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.trustedHigh) : 0;
-    const gate = dealThreshold(memory.trustedHigh || item.listPrice || item.price, minDiscount);
+    const gate = dealThreshold(memory.trustedHigh || item.listPrice || item.price, minDiscount, item.title);
     if (Math.max(listOff, memoryOff) < gate) continue;
     if (!(await needsFreshVerdict(item.asin, item.price))) continue;
-    if (memoryOff >= gate && memory.trustedHigh) {
+    if (memoryOff >= gate && memory.trustedHigh && deepMemoryDeal(memoryOff, memory.samples, minDiscount)) {
       await insertAlert({
         asin: item.asin,
         title: item.title,
@@ -248,7 +237,7 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
       await addLog("bilgi", `EVET hafıza: ${item.title.slice(0, 70)} ${Math.round(memory.trustedHigh)}→${Math.round(item.price)}`);
       continue;
     }
-    await enqueuePending(item, memory, listOff >= minDiscount ? 0 : 1);
+    await enqueuePending(item, memory, memoryOff >= gate ? 2 : listOff >= minDiscount ? 1 : 0);
   }
   await pingHunts(items);
   return count;
@@ -416,9 +405,7 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
     else if (input.kind === "reyon") await eatAisle(url, html, items, input.label);
     else await eatTour(url, html, items);
   }
-  const judged = await judgeOne();
-  const sent = await sendOne();
-  const extraJudged = await judgeOne();
-  const extraSent = await sendOne();
-  return { ok: !blocked, blocked, items: items.length, judged: judged + extraJudged, sent: sent + extraSent, next: input.quiet ? { kind: "tur", label: "", url: "" } : await nextTarget() };
+  const judged = (await judgeOne()) + (await judgeOne()) + (await judgeOne());
+  const sent = (await sendOne()) + (await sendOne());
+  return { ok: !blocked, blocked, items: items.length, judged, sent, next: input.quiet ? { kind: "tur", label: "", url: "" } : await nextTarget() };
 }

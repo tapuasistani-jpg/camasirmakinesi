@@ -10,9 +10,17 @@ export function tl(value: number): string {
   return Math.round(value).toLocaleString("tr-TR");
 }
 
-export function dealThreshold(reference: number, siteMin: number): number {
-  if (reference >= 10_000) return Math.min(20, siteMin);
+export function isTechDeal(title: string): boolean {
+  return /iphone|ipad|macbook|imac|airpods|galaxy s|galaxy z|pixel|playstation|xbox|nintendo|switch|rtx|radeon|geforce|legion|asus rog|\brog\b|mac mini|işlemci|ekran kart|notebook|laptop/i.test(title);
+}
+
+export function dealThreshold(reference: number, siteMin: number, title = ""): number {
+  if (reference >= 10_000 && isTechDeal(title)) return Math.min(20, siteMin);
   return siteMin;
+}
+
+export function deepMemoryDeal(memoryOff: number, samples: number, siteMin: number): boolean {
+  return samples >= 3 && memoryOff >= Math.max(siteMin, 50);
 }
 
 export function percentOff(price: number | null, reference: number | null): number {
@@ -163,7 +171,7 @@ export function decide(input: {
       detail: `Hayır. Çizili fiyata göre %${Math.round(listOff)} indirim var ama piyasa ortası ${tl(median)} TL. Amazon fiyatı buna yakın, etiket şişirilmiş olabilir.`,
     };
   }
-  if (memoryOff >= input.threshold && input.samples >= 2 && trustedHigh) {
+  if (memoryOff >= input.threshold && input.samples >= 2 && trustedHigh && deepMemoryDeal(memoryOff, input.samples, input.threshold)) {
     return {
       verdict: "evet",
       discount: Math.round(memoryOff * 10) / 10,
@@ -222,10 +230,31 @@ export function assertVerdicts(): void {
   if (echoed.length !== 2 || echoed[0] !== 7000) throw new Error("piyasa filtresi bozuldu");
   const cheaper = decide({ price: 2000, listPrice: 9000, highestPrice: 2000, samples: 1, marketPrices: [4400, 4500, 4600], threshold: 50 });
   if (cheaper?.verdict !== "evet") throw new Error("piyasadan yarı yarıya ucuz ürün kaçtı");
-  if (dealThreshold(180000, 50) !== 20) throw new Error("pahalı ürün eşiği 20 olmalı");
+  if (dealThreshold(180000, 50, "iPhone 17 Pro Max") !== 20) throw new Error("telefon eşiği 20 olmalı");
+  if (dealThreshold(180000, 50, "Salomon Ayakkabı") !== 50) throw new Error("ayakkabıya yüzde 20 kapı açıldı");
   if (dealThreshold(168, 50) !== 50) throw new Error("ucuz ürün eşiği bozuldu");
-  const phone = decide({ price: 120000, listPrice: 180000, highestPrice: 180000, samples: 3, marketPrices: [], threshold: dealThreshold(180000, 50), history: [180000, 175000, 120000] });
-  if (phone?.verdict !== "evet") throw new Error("iPhone yüzde 33 kaçtı");
+  const phoneWait = decide({
+    price: 120000,
+    listPrice: 180000,
+    highestPrice: 180000,
+    samples: 3,
+    marketPrices: [],
+    threshold: dealThreshold(180000, 50, "iPhone 17 Pro Max"),
+    title: "iPhone 17 Pro Max",
+    history: [180000, 175000, 120000],
+  });
+  if (phoneWait?.verdict === "evet") throw new Error("iPhone piyasasız telegram attı");
+  const phone = decide({
+    price: 120000,
+    listPrice: 180000,
+    highestPrice: 180000,
+    samples: 3,
+    marketPrices: [175000, 178000, 182000],
+    threshold: dealThreshold(180000, 50, "iPhone 17 Pro Max"),
+    title: "iPhone 17 Pro Max",
+    history: [180000, 175000, 120000],
+  });
+  if (phone?.verdict !== "evet") throw new Error("iPhone yüzde 33 piyasaya göre kaçtı");
   if (!cameBackToOldPrice([6399, 7875, 10500, 6399])) throw new Error("eski fiyata dönüş kaçtı");
   const hike = decide({
     price: 6399,
