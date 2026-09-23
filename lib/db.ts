@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 
-import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice, huntFloor } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice, huntFloor, keepNewPrice } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
 import { cameBackToOldPrice, dealThreshold, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
@@ -395,6 +395,9 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
   const sql = db();
   const existing = (await sql`SELECT * FROM products WHERE asin = ${item.asin}`) as Row[];
   if (!existing.length) {
+    if (!keepNewPrice(item.title, null, item.price)) {
+      return { highest: item.price, samples: 0, inserted: false, trustedHigh: null };
+    }
     await sql`INSERT INTO products (
       asin, title, url, image, condition, last_price, list_price, highest_price, lowest_price, first_seen, last_seen
     ) VALUES (
@@ -406,6 +409,18 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
   }
   const row = existing[0];
   const previous = num(row.last_price) ?? item.price;
+  if (!keepNewPrice(item.title, previous, item.price)) {
+    const count = (await sql`SELECT COUNT(*)::int AS n FROM price_points WHERE asin = ${item.asin}`) as Row[];
+    const points = (await sql`SELECT price FROM price_points WHERE asin = ${item.asin} ORDER BY seen_at ASC, id ASC`) as Row[];
+    const history = points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0);
+    await sql`UPDATE products SET last_seen = NOW() WHERE asin = ${item.asin}`;
+    return {
+      highest: num(row.highest_price) ?? previous,
+      samples: num(count[0]?.n) ?? 1,
+      inserted: false,
+      trustedHigh: cameBackToOldPrice(history) ? null : realSaleHigh(history),
+    };
+  }
   const highest = Math.max(num(row.highest_price) ?? item.price, item.price);
   const lowest = Math.min(num(row.lowest_price) ?? item.price, item.price);
   const storedList = num(row.list_price);

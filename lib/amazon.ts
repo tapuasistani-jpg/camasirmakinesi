@@ -95,6 +95,21 @@ export function huntFloor(query: string): number {
   return 200;
 }
 
+export function priceBelongs(title: string, price: number): boolean {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const floor = huntFloor(title);
+  if (floor <= 200) return price >= 5;
+  return price >= floor;
+}
+
+export function keepNewPrice(title: string, previous: number | null, next: number): boolean {
+  if (!priceBelongs(title, next)) return false;
+  if (previous == null || previous <= 0) return true;
+  const floor = huntFloor(title);
+  if (next > previous * 6 && previous >= Math.max(floor, 200)) return false;
+  return true;
+}
+
 function huntJunk(title: string): boolean {
   return /\bvs\b|unveiling|poster|afis|afi[sş]|unboxing|kitap\b/.test(fold(title));
 }
@@ -610,7 +625,7 @@ export function parseSearchPage(html: string): ProductCard[] {
     );
     if (title.length < 3) return;
     const price = priceFromCard(card, false) ?? looseTl(card);
-    if (price == null) return;
+    if (price == null || !priceBelongs(title, price)) return;
     const cardText = clean(card.text());
     let listPrice: number | null = null;
     card.find("span.a-price.a-text-price").each((__, priceNode) => {
@@ -678,19 +693,19 @@ function jsonField(html: string, key: string): string {
   return match?.[1] || "";
 }
 
-function jsonPrice(html: string): number | null {
-  const amount = html.match(/"priceAmount"\s*:\s*"?(\d+(?:\.\d+)?)/i);
-  if (amount) {
-    const value = Number(amount[1]);
-    if (Number.isFinite(value) && value > 0) return value;
-  }
-  const display = html.match(/"displayPrice"\s*:\s*"([^"]+)"/i);
-  if (display) {
-    const value = parsePrice(display[1]);
-    if (value != null) return value;
-  }
-  const price = html.match(/"price"\s*:\s*"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?|\d+)"/i);
-  return price ? parsePrice(price[1]) : null;
+function priceFromBox(root: { find(selector: string): { first(): { text(): string } } }): number | null {
+  return parsePrice(root.find("span.a-price:not(.a-text-price) span.a-offscreen").first().text())
+    || parsePrice(root.find("#price_inside_buybox").text())
+    || parsePrice(root.find("#corePrice_feature_div span.a-offscreen").first().text());
+}
+
+function jsonPriceForAsin(html: string, asin: string): number | null {
+  const escaped = asin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const near = html.match(new RegExp(`${escaped}[\\s\\S]{0,1200}"priceAmount"\\s*:\\s*"?(\\d+(?:\\.\\d+)?)`, "i"))
+    || html.match(new RegExp(`"priceAmount"\\s*:\\s*"?(\\d+(?:\\.\\d+)?)[\\s\\S]{0,800}${escaped}`, "i"));
+  if (!near) return null;
+  const value = Number(near[1]);
+  return Number.isFinite(value) && value > 0 && value < 5_000_000 ? value : null;
 }
 
 export function parseProductPage(html: string, pageUrl: string): ProductCard | null {
@@ -709,13 +724,33 @@ export function parseProductPage(html: string, pageUrl: string): ProductCard | n
   );
   const title = rawTitle.replace(/^amazon\.com\.tr\s*[:|\-]\s*/i, "").trim();
   if (title.length < 3) return null;
-  const buybox = parsePrice($("span.a-price:not(.a-text-price) span.a-offscreen").first().text())
-    || parsePrice($("#corePrice_feature_div span.a-offscreen").first().text())
-    || parsePrice($("#corePriceDisplay_desktop_feature_div span.a-offscreen").first().text())
-    || parsePrice($("#price_inside_buybox").text())
-    || parsePrice($(".a-price .a-offscreen").first().text())
-    || parsePrice($("meta[itemprop='price']").attr("content"))
-    || jsonPrice(html);
+  const boxes = [
+    "#corePrice_feature_div",
+    "#corePriceDisplay_desktop_feature_div",
+    "#desktop_buybox",
+    "#buybox",
+    "#apex_desktop",
+    "#ppd #centerCol",
+    "#centerCol",
+    "#ppd",
+  ];
+  let buybox: number | null = null;
+  for (const selector of boxes) {
+    const root = $(selector);
+    if (!root.length) continue;
+    buybox = priceFromBox(root);
+    if (buybox != null) break;
+  }
+  if (buybox == null) {
+    const tagged = parsePrice($(`[data-asin='${asin}']`).attr("data-asin-price") || "");
+    buybox = tagged ?? jsonPriceForAsin(html, asin);
+    if (buybox == null) {
+      const amounts = [...html.matchAll(/"priceAmount"\s*:\s*"?(\d+(?:\.\d+)?)/gi)]
+        .map((match) => Number(match[1]))
+        .filter((value) => Number.isFinite(value) && value > 0 && value < 5_000_000);
+      if (amounts.length === 1) buybox = amounts[0];
+    }
+  }
   const others: number[] = [];
   $("#olp_feature_div, #aod-offer-list, #aod-container, #mbc, .olp-link, #aod-ingress-message").each((_, node) => {
     const text = clean($(node).text());
@@ -732,7 +767,13 @@ export function parseProductPage(html: string, pageUrl: string): ProductCard | n
   const cheaper = others.filter((value) => value > 0 && (floor <= 0 || (value <= floor && value >= floor * 0.3)));
   const price = cheaper.length ? Math.min(floor || cheaper[0], ...cheaper) : buybox;
   if (price == null) return null;
-  const list = parsePrice($("span.a-price.a-text-price span.a-offscreen").first().text());
+  let list: number | null = null;
+  for (const selector of boxes) {
+    const root = $(selector);
+    if (!root.length) continue;
+    list = parsePrice(root.find("span.a-price.a-text-price span.a-offscreen").first().text());
+    if (list != null) break;
+  }
   const listPrice = list != null && list > price && !fakeListPrice(title, price, list) ? list : null;
   const image = $("#landingImage").attr("src") || $("#imgBlkFront").attr("src") || $("img#landingImage").attr("data-old-hires") || $("meta[property='og:image']").attr("content") || null;
   return {
@@ -900,6 +941,12 @@ export function assertAmazonParser(): void {
     <div id="olp_feature_div">4 yeni: 89.999,00 TL'den</div>
   `, "https://www.amazon.com.tr/dp/B0IPHONE17");
   if (!otherSellers || otherSellers.price !== 89999) throw new Error("diğer satıcı fiyatı kaçtı");
+  const addonFirst = parseProductPage(`
+    <span class="a-price"><span class="a-offscreen">122,00 TL</span></span>
+    <span id="productTitle">Samsung Galaxy S25 256 GB</span>
+    <div id="corePrice_feature_div"><span class="a-price"><span class="a-offscreen">46.699,00 TL</span></span></div>
+  `, "https://www.amazon.com.tr/dp/B0XDX7FW97");
+  if (!addonFirst || addonFirst.price !== 46699) throw new Error("sayfadaki 122 TL aksesuar telefon fiyatı oldu");
   if (!titleFits("Apple iPhone 17 Pro Max 256 GB", "iPhone 17 Pro Max")) throw new Error("telefon ismi eşleşmedi");
   if (!titleFits("APPLE IPHONE 17 PRO MAX", "iPhone 17 Pro Max")) throw new Error("büyük harf iPhone kaçtı");
   if (!titleFits("Sony PlayStation 5 Pro Konsol", "PS5 Pro")) throw new Error("PS5 adı eşleşmedi");
@@ -918,6 +965,8 @@ export function assertAmazonParser(): void {
   if (huntPick([{ asin: "B0FAKEWATCH", title: "Watch Ultra Privacy", price: 301, listPrice: null, image: null, condition: "", url: "" }], "Apple Watch Ultra").length) {
     throw new Error("ucuz film takip fiyatı oldu");
   }
+  if (keepNewPrice("Samsung Galaxy S25 256 GB", 46699, 122)) throw new Error("122 TL telefon fiyatı kabul edildi");
+  if (!keepNewPrice("Selpak Tuvalet Kağıdı", 156, 47)) throw new Error("Selpak gerçek düşüşü çöp sandı");
   if (huntPick([{
     asin: "B0POSTER409",
     title: "Nvidia GeForce GTX 4090 vs AMD Radeon RX 7900 XT Unveiling the Graph",
