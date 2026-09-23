@@ -20,9 +20,8 @@ jobs:
         env:
           SCAN_URL: ${{ secrets.SCAN_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
         run: |
+          set +e
           if [ -z "$SCAN_URL" ] || [ -z "$CRON_SECRET" ]; then
             echo "GitHub secret eksik: SCAN_URL ve CRON_SECRET"
             exit 1
@@ -32,20 +31,19 @@ jobs:
           agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
           deadline=$((SECONDS + 200 * 60))
 
-          # Amazon çerezini bir kez al, sonra hep aynı oturumla gez.
           curl -sS -m 30 -c jar.txt -A "$agent" \
             -H "Accept-Language: tr-TR,tr;q=0.9" \
             "https://www.amazon.com.tr/" -o /dev/null || true
 
-          target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next")
+          target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next" || true)
           while [ $SECONDS -lt $deadline ]; do
-            url=$(echo "$target" | jq -r '.url // empty')
-            kind=$(echo "$target" | jq -r '.kind // "tur"')
-            label=$(echo "$target" | jq -r '.label // ""')
+            url=$(echo "$target" | jq -r '.url // empty' 2>/dev/null || true)
+            kind=$(echo "$target" | jq -r '.kind // "tur"' 2>/dev/null || true)
+            label=$(echo "$target" | jq -r '.label // ""' 2>/dev/null || true)
             if [ -z "$url" ]; then
-              echo "Sıradaki adres gelmedi: $target"
+              echo "Sıradaki adres gelmedi, 1 dakika bekleniyor."
               sleep 60
-              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next")
+              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next" || true)
               continue
             fi
             echo "$kind · $label · $url"
@@ -61,17 +59,17 @@ jobs:
               continue
             fi
             jq -n --arg url "$url" --arg kind "$kind" --arg label "$label" --rawfile html sayfa.html \
-              '{url:$url,kind:$kind,label:$label,html:$html}' > gonder.json
+              '{url:$url,kind:$kind,label:$label,html:$html}' > gonder.json || true
             cevap=$(curl -sS -m 55 -X POST -H "$auth" -H 'Content-Type: application/json' \
-              --data @gonder.json "$base/api/cron/feed")
+              --data @gonder.json "$base/api/cron/feed" || true)
             echo "$cevap" | head -c 400
             echo
-            extras=$(echo "$target" | jq -c '.extra // []')
-            yeni=$(echo "$cevap" | jq -c '.next // empty')
-            if [ -n "$yeni" ]; then
+            extras=$(echo "$target" | jq -c '.extra // []' 2>/dev/null || echo "[]")
+            yeni=$(echo "$cevap" | jq -c '.next // empty' 2>/dev/null || true)
+            if [ -n "$yeni" ] && [ "$yeni" != "null" ]; then
               target="$yeni"
             else
-              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next")
+              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next" || true)
             fi
             if [ "$extras" != "[]" ] && [ "$extras" != "null" ]; then
               echo "$extras" | jq -c '.[]' | while read -r extra; do
@@ -87,9 +85,9 @@ jobs:
                   -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
                 [ "$ecode" != "200" ] && continue
                 jq -n --arg url "$eurl" --arg kind "$ekind" --arg label "$elabel" --rawfile html sayfa.html \
-                  '{url:$url,kind:$kind,label:$label,html:$html,quiet:true}' > gonder.json
+                  '{url:$url,kind:$kind,label:$label,html:$html,quiet:true}' > gonder.json || true
                 curl -sS -m 55 -X POST -H "$auth" -H 'Content-Type: application/json' \
-                  --data @gonder.json "$base/api/cron/feed" | head -c 200
+                  --data @gonder.json "$base/api/cron/feed" | head -c 200 || true
                 echo
                 sleep 3
               done
@@ -100,6 +98,14 @@ jobs:
               sleep 4
             fi
           done
+          exit 0
+
+      - name: Bitince yine başlat
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
           curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
