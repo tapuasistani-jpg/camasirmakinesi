@@ -131,6 +131,7 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE watch ADD COLUMN IF NOT EXISTS high_samples INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS high_samples INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS hunt_tried_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS telegram_id TEXT`;
 }
 
 export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
@@ -589,8 +590,47 @@ export async function nextUnsent(): Promise<Row | null> {
   return rows[0] ?? null;
 }
 
-export async function markNotified(id: number): Promise<void> {
+export async function markNotified(id: number, telegramId?: number | null): Promise<void> {
+  if (telegramId != null) {
+    await db()`UPDATE alerts SET notified = 1, telegram_id = ${String(telegramId)} WHERE id = ${id}`;
+    return;
+  }
   await db()`UPDATE alerts SET notified = 1 WHERE id = ${id}`;
+}
+
+export async function openBak(item: ProductCard, highest: number | null): Promise<boolean> {
+  const open = (await db()`SELECT id FROM alerts
+    WHERE asin = ${item.asin} AND verdict = 'bak' AND COALESCE(dismissed, 0) = 0 LIMIT 1`) as Row[];
+  if (open.length) return false;
+  const was = highest && highest > item.price ? highest : null;
+  const off = percentOff(item.price, was);
+  await insertAlert({
+    asin: item.asin,
+    title: item.title,
+    url: item.url,
+    image: item.image,
+    price: item.price,
+    listPrice: item.listPrice,
+    highestPrice: was,
+    notify: true,
+    verdict: {
+      verdict: "bak",
+      discount: Math.round(off * 10) / 10,
+      marketMedian: null,
+      marketSamples: 0,
+      detail: `Bak. Depo ${Math.round(item.price)} TL${was ? `, biz ${Math.round(was)} TL görmüştük` : ""}. Piyasa bakılıyor, stok kaçmasın.`,
+    },
+  });
+  return true;
+}
+
+export async function closeBak(asin: string): Promise<number[]> {
+  const rows = (await db()`SELECT telegram_id FROM alerts
+    WHERE asin = ${asin} AND verdict = 'bak' AND COALESCE(dismissed, 0) = 0`) as Row[];
+  await db()`UPDATE alerts SET dismissed = 1 WHERE asin = ${asin} AND verdict = 'bak'`;
+  return rows
+    .map((row) => Number(row.telegram_id))
+    .filter((id) => Number.isFinite(id) && id > 0);
 }
 
 export async function countProducts(): Promise<number> {
@@ -734,6 +774,13 @@ export async function getStatus(): Promise<Status> {
   const config = await getConfig();
   const state = await readState();
   const query = state.queryText || DEPO_QUERIES[state.queryIndex % DEPO_QUERIES.length] || "";
+  const nowKind = await readSetting("now_kind");
+  const nowLabel = await readSetting("now_label");
+  const nowPage = Number(await readSetting("now_page")) || 0;
+  const kindName = nowKind === "tur" ? "Tur" : nowKind === "reyon" ? "Reyon" : nowKind === "takip" ? "Takip" : nowKind === "urun" ? "Ürün" : "";
+  const search = nowLabel
+    ? `${kindName || "Tarama"} · ${nowLabel}`
+    : `Amazon Depo · ${depoQueryLabel(query)}`;
   const products = (await sql`SELECT COUNT(*)::int AS n FROM products`) as Row[];
   const deals = (await sql`SELECT COUNT(*)::int AS n FROM alerts WHERE verdict = 'evet' AND COALESCE(dismissed, 0) = 0`) as Row[];
   const alerts = (await sql`SELECT * FROM alerts WHERE COALESCE(dismissed, 0) = 0 ORDER BY id DESC LIMIT 40`) as Row[];
@@ -799,8 +846,8 @@ export async function getStatus(): Promise<Status> {
     ],
     ready: true,
     message: "",
-    page: state.page,
-    search: `Amazon Depo · ${depoQueryLabel(query)}`,
+    page: nowPage || (nowKind === "tur" || !nowKind ? state.page : 0),
+    search,
     aisle: aisle.label,
     aislePage: cursors[aisle.label]?.page ?? state.aislePage,
     aisles: DEPO_AISLES.map((row) => ({

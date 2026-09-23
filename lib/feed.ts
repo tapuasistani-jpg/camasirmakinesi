@@ -31,7 +31,7 @@ import {
   applyWatchHunt,
   enqueuePending,
   getConfig,
-  insertAlert,
+  openBak,
   listWatchQueries,
   needsFreshVerdict,
   nextRechecks,
@@ -51,8 +51,7 @@ import {
   writeState,
 } from "@/lib/db";
 import { judgeOne, sendOne } from "@/lib/scan";
-import { searchPrices } from "@/lib/market";
-import { dealThreshold, decide, deepMemoryDeal, percentOff } from "@/lib/verdict";
+import { dealThreshold, deepMemoryDeal, percentOff } from "@/lib/verdict";
 
 // GitHub tarafı sayfayı indirir, burası sadece okur ve sıradaki adresi söyler.
 export type Target = {
@@ -177,38 +176,9 @@ async function pingHunts(items: ProductCard[]): Promise<void> {
     const cheapest = matches.reduce((best, item) => (item.price < best.price ? item : best));
     const drop = await applyWatchHunt(hunt.query, cheapest);
     if (!drop.hit || !drop.base) continue;
-    let marketPrices: number[] = [];
-    try {
-      marketPrices = await searchPrices(cheapest.title, cheapest.price, { list: cheapest.listPrice, high: drop.base });
-    } catch {
-      marketPrices = [];
-    }
-    const verdict = decide({
-      price: cheapest.price,
-      listPrice: cheapest.listPrice,
-      highestPrice: drop.base,
-      samples: 3,
-      marketPrices,
-      threshold: dealThreshold(drop.base, (await getConfig()).minDiscount, cheapest.title),
-      title: cheapest.title,
-      history: [drop.base, cheapest.price],
-    });
-    if (!verdict || verdict.verdict !== "evet") {
-      await addLog("bilgi", `Takip "${hunt.query}" ${Math.round(cheapest.price)} TL, piyasaya göre fırsat değil.`);
-      continue;
-    }
-    await insertAlert({
-      asin: cheapest.asin,
-      title: cheapest.title,
-      url: cheapest.url,
-      image: cheapest.image,
-      price: cheapest.price,
-      listPrice: cheapest.listPrice,
-      highestPrice: drop.base,
-      notify: true,
-      verdict,
-    });
-    await addLog("bilgi", `Takip "${hunt.query}" düştü: ${Math.round(cheapest.price)} TL.`);
+    await openBak(cheapest, drop.base);
+    await enqueuePending(cheapest, { highest: drop.base, samples: 3 }, 2);
+    await addLog("bilgi", `BAK takip "${hunt.query}" ${Math.round(cheapest.price)} TL, piyasa bakılacak.`);
   }
 }
 
@@ -221,6 +191,7 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
     if (watched.has(item.asin)) {
       const drop = await watchDrop(item);
       if (drop.hit && drop.base) {
+        await openBak(item, drop.base);
         await enqueuePending(item, { highest: drop.base, samples: 3 }, 2);
       }
     }
@@ -230,24 +201,9 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
     if (Math.max(listOff, memoryOff) < gate) continue;
     if (!(await needsFreshVerdict(item.asin, item.price))) continue;
     if (memoryOff >= gate && memory.trustedHigh && deepMemoryDeal(memoryOff, memory.samples, minDiscount)) {
-      await insertAlert({
-        asin: item.asin,
-        title: item.title,
-        url: item.url,
-        image: item.image,
-        price: item.price,
-        listPrice: item.listPrice,
-        highestPrice: memory.trustedHigh,
-        notify: true,
-        verdict: {
-          verdict: "evet",
-          discount: Math.round(memoryOff * 10) / 10,
-          marketMedian: null,
-          marketSamples: 0,
-          detail: `Evet. Bu ürünü ${Math.round(memory.trustedHigh)} TL görmüştük, şimdi ${Math.round(item.price)} TL.`,
-        },
-      });
-      await addLog("bilgi", `EVET hafıza: ${item.title.slice(0, 70)} ${Math.round(memory.trustedHigh)}→${Math.round(item.price)}`);
+      await openBak(item, memory.trustedHigh);
+      await enqueuePending(item, memory, 2);
+      await addLog("bilgi", `BAK hafıza: ${item.title.slice(0, 70)} ${Math.round(memory.trustedHigh)}→${Math.round(item.price)}`);
       continue;
     }
     await enqueuePending(item, memory, memoryOff >= gate ? 2 : listOff >= minDiscount ? 1 : 0);
@@ -402,6 +358,15 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
   const html = input.html || "";
   const url = input.url || "";
   await touchLastScan();
+  const kindName = input.kind === "tur" ? "Tur" : input.kind === "reyon" ? "Reyon" : input.kind === "takip" ? "Takip" : input.kind === "urun" ? "Ürün" : "Tarama";
+  await writeSetting("now_kind", input.kind || "tur");
+  await writeSetting("now_label", input.label || kindName);
+  if (input.kind === "tur" || input.kind === "reyon") {
+    const state = await readState();
+    await writeSetting("now_page", String(input.kind === "tur" ? state.page : state.aislePage));
+  } else {
+    await writeSetting("now_page", "");
+  }
   let items: ProductCard[] = [];
   let blocked = false;
   if (!html || html.length < 500 || isBlocked(html)) {
@@ -426,7 +391,8 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
     else if (input.kind === "reyon") await eatAisle(url, html, items, input.label);
     else await eatTour(url, html, items);
   }
+  const rushed = (await sendOne()) + (await sendOne());
   const judged = (await judgeOne()) + (await judgeOne()) + (await judgeOne());
-  const sent = (await sendOne()) + (await sendOne());
+  const sent = rushed + (await sendOne()) + (await sendOne());
   return { ok: !blocked, blocked, items: items.length, judged, sent, next: input.quiet ? { kind: "tur", label: "", url: "" } : await nextTarget() };
 }

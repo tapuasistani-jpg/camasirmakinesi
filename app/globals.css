@@ -152,6 +152,7 @@ button.close {
 }
 
 .badge.evet { background: var(--green); }
+.badge.bak { background: #1f3a5f; }
 .badge.hayir { background: var(--amber); }
 .badge.kararsiz { background: #5e564c; }
 

@@ -27,7 +27,7 @@ export function formatAlert(alert: AlertRow): string {
   const was = displayWas(price, alert.highest_price ?? null, alert.list_price ?? null);
   const drop = was ? Math.round(((was - price) / was) * 100) : Math.round(Number(alert.discount || 0));
   const market = alert.market_median != null ? Number(alert.market_median) : null;
-  const head = alert.verdict === "evet" ? "EVET" : "KONTROL";
+  const head = alert.verdict === "evet" ? "EVET" : alert.verdict === "bak" ? "BAK" : "KONTROL";
   const lines = [
     "<b>ÇAMAŞIRMAKİNESİ</b>",
     head,
@@ -56,13 +56,19 @@ async function telegram(token: string, method: string, body?: Record<string, unk
   return data;
 }
 
-export async function sendMessage(token: string, chatId: string, text: string): Promise<void> {
-  await telegram(token, "sendMessage", {
+export async function sendMessage(token: string, chatId: string, text: string): Promise<number | null> {
+  const data = await telegram(token, "sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
     disable_web_page_preview: false,
   });
+  const id = Number((data.result as { message_id?: number } | undefined)?.message_id);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+export async function deleteMessage(token: string, chatId: string, messageId: number): Promise<void> {
+  await telegram(token, "deleteMessage", { chat_id: chatId, message_id: messageId });
 }
 
 export async function discoverChats(token: string): Promise<{ id: string; label: string }[]> {

@@ -1,5 +1,5 @@
 export type Verdict = {
-  verdict: "evet" | "hayir" | "kararsiz";
+  verdict: "evet" | "hayir" | "kararsiz" | "bak";
   discount: number;
   marketMedian: number | null;
   marketSamples: number;
@@ -33,6 +33,7 @@ export function dealWhy(input: { price: number; was: number | null; market: numb
   if (input.market && input.price >= input.market) {
     return `Piyasa ~${tl(input.market)} TL. Amazon buna yakın veya pahalı.`;
   }
+  if (input.detail.startsWith("Bak.")) return input.detail.split(/(?<=\.)\s/).slice(0, 2).join(" ");
   if (input.was && input.was > input.price) {
     return `Biz ${tl(input.was)} TL görmüştük, şimdi ${tl(input.price)} TL. Piyasa henüz yok.`;
   }
@@ -201,15 +202,6 @@ export function decide(input: {
       detail: `Hayır. Çizili fiyata göre %${Math.round(listOff)} indirim var ama piyasa ortası ${tl(median)} TL. Amazon fiyatı buna yakın, etiket şişirilmiş olabilir.`,
     };
   }
-  if (memoryOff >= input.threshold && input.samples >= 2 && trustedHigh && deepMemoryDeal(memoryOff, input.samples, input.threshold)) {
-    return {
-      verdict: "evet",
-      discount: Math.round(memoryOff * 10) / 10,
-      marketMedian: null,
-      marketSamples: 0,
-      detail: `Evet. Bu ürünü ${tl(trustedHigh)} TL görmüştük, şimdi ${tl(input.price)} TL. Hafızadaki gerçek satıştan eşiğin üstünde düştü.`,
-    };
-  }
   return {
     verdict: "kararsiz",
     discount: Math.round(discount * 10) / 10,
@@ -233,7 +225,17 @@ export function assertVerdicts(): void {
     threshold: 50,
     history: [156, 156, 150, 47],
   });
-  if (selpak?.verdict !== "evet") throw new Error("156'dan 47'ye düşen ürün bekledi");
+  if (selpak?.verdict !== "kararsiz") throw new Error("piyasasız Selpak EVET oldu");
+  const selpakYes = decide({
+    price: 47,
+    listPrice: 47,
+    highestPrice: 156,
+    samples: 4,
+    marketPrices: [150, 160, 155],
+    threshold: 50,
+    history: [156, 156, 150, 47],
+  });
+  if (selpakYes?.verdict !== "evet") throw new Error("156'dan 47'ye düşen ürün piyasayla kaçtı");
   const fakeWas = decide({
     price: 139,
     listPrice: 550,

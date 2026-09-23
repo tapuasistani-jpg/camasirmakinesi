@@ -3,6 +3,7 @@ import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
   bumpPending,
+  closeBak,
   dropPending,
   enqueuePending,
   getConfig,
@@ -23,7 +24,7 @@ import {
   writeState,
 } from "@/lib/db";
 import { searchPrices } from "@/lib/market";
-import { formatAlert, sendMessage } from "@/lib/telegram";
+import { deleteMessage, formatAlert, sendMessage } from "@/lib/telegram";
 import { dealThreshold, decide, deepMemoryDeal, percentOff } from "@/lib/verdict";
 
 const BROWSER_HEADERS = {
@@ -72,6 +73,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function retractBak(asin: string): Promise<void> {
+  const ids = await closeBak(asin);
+  if (!ids.length) return;
+  const config = await getConfig();
+  if (!config.token || !config.chatId) return;
+  for (const id of ids) {
+    try {
+      await deleteMessage(config.token, config.chatId, id);
+    } catch {
+      /* mesaj zaten yok */
+    }
+  }
+}
+
 // Amazon peş peşe isteklerde 503 veriyor. Biraz bekleyip yeniden soruyoruz.
 async function fetchAmazon(url: string, cookies: string): Promise<{ html: string; detail: string; cookies: string }> {
   let page = await requestAmazon(url, cookies, "https://www.amazon.com.tr/");
@@ -104,6 +119,7 @@ export async function judgeOne(): Promise<number> {
   const deep = deepMemoryDeal(memoryOff, samples, config.minDiscount);
   const maxTries = deep ? 3 : 2;
   if (tries >= maxTries) {
+    await retractBak(asin);
     await insertAlert({
       asin,
       title,
@@ -112,22 +128,16 @@ export async function judgeOne(): Promise<number> {
       price,
       listPrice,
       highestPrice: highest,
-      notify: deep,
-      verdict: deep
-        ? {
-          verdict: "evet",
-          discount: Math.round(memoryOff * 10) / 10,
-          marketMedian: null,
-          marketSamples: 0,
-          detail: `Evet. Bu ürünü ${Math.round(Number(highest))} TL görmüştük, şimdi ${Math.round(price)} TL. Piyasa araması cevap vermedi, hafıza düşüşü eşiği geçti.`,
-        }
-        : {
-          verdict: "kararsiz",
-          discount: Math.round(percentOff(price, listPrice) * 10) / 10,
-          marketMedian: null,
-          marketSamples: 0,
-          detail: "Net değil. Piyasa araması sonuç vermedi, hafıza tek başına yetmedi.",
-        },
+      notify: false,
+      verdict: {
+        verdict: "kararsiz",
+        discount: Math.round(percentOff(price, listPrice) * 10) / 10,
+        marketMedian: null,
+        marketSamples: 0,
+        detail: deep
+          ? "Net değil. Hafıza düşüşü var ama piyasa araması cevap vermedi, Telegram EVET gitmedi."
+          : "Net değil. Piyasa araması sonuç vermedi, hafıza tek başına yetmedi.",
+      },
     });
     await dropPending(asin);
     return 1;
@@ -154,7 +164,11 @@ export async function judgeOne(): Promise<number> {
     history: highest != null ? [highest, price] : [price],
   });
   await dropPending(asin);
-  if (!verdict) return 0;
+  if (!verdict) {
+    await retractBak(asin);
+    return 0;
+  }
+  await retractBak(asin);
   const notify = verdict.verdict === "evet" || (verdict.verdict === "hayir" && config.notifySuspicious);
   await insertAlert({
     asin,
@@ -181,7 +195,7 @@ export async function sendOne(): Promise<number> {
     return 0;
   }
   try {
-    await sendMessage(config.token, config.chatId, formatAlert({
+    const telegramId = await sendMessage(config.token, config.chatId, formatAlert({
       title: String(alert.title ?? ""),
       verdict: String(alert.verdict ?? ""),
       price: Number(alert.price),
@@ -193,12 +207,12 @@ export async function sendOne(): Promise<number> {
       detail: String(alert.detail ?? ""),
       url: String(alert.url ?? ""),
     }));
+    await markNotified(Number(alert.id), telegramId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram gitmedi";
     await addLog("hata", `Telegram gitmedi: ${message}`);
     return 0;
   }
-  await markNotified(Number(alert.id));
   await addLog("bilgi", `Telegram gitti: ${String(alert.title ?? "").slice(0, 80)}`);
   return 1;
 }

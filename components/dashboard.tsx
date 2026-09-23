@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AlertView, Status } from "@/lib/types";
 import { dealWhy, displayWas, readableTitle } from "@/lib/verdict";
 
-const LABELS: Record<string, string> = { evet: "EVET", hayir: "HAYIR", kararsiz: "NET DEĞİL" };
+const LABELS: Record<string, string> = { evet: "EVET", bak: "BAK", hayir: "HAYIR", kararsiz: "NET DEĞİL" };
 
 const CATEGORIES = [
   "Bahçe",
@@ -429,7 +429,7 @@ export default function Dashboard() {
         <div className="stat"><span>Hafıza</span><b>{status?.productCount ?? "—"}</b></div>
         <div className="stat"><span>Net fırsat</span><b>{status?.dealCount ?? "—"}</b></div>
         <div className="stat"><span>Sırada bekleyen</span><b>{status?.pendingCount ?? "—"}</b></div>
-        <div className="stat"><span>{status?.search ?? "Amazon Depo"}</span><b>sayfa {status?.page ?? "—"}</b></div>
+        <div className="stat"><span>{status?.search ?? "Amazon Depo"}</span><b>{status?.page ? `sayfa ${status.page}` : "bakıyor"}</b></div>
         <div className="stat"><span>Son tarama</span><b style={{ fontSize: 16 }}>{when(status?.lastScanAt)}</b></div>
       </section>
 
@@ -459,15 +459,15 @@ export default function Dashboard() {
         <section className="panel">
           <div className="panel-head">
             <h2>Kararlar</h2>
-            <p>Telefon, PC, ekran kartında 10 bin üstü %{20}. Diğerinde %{status?.minDiscount ?? 50}. Varsayılan yalnız EVET.</p>
+            <p>Telefon, PC, ekran kartında 10 bin üstü %{20}. Diğerinde %{status?.minDiscount ?? 50}. Varsayılan BAK ve EVET.</p>
             <button className="ghost" type="button" onClick={() => setKararHepsi(!kararHepsi)}>
-              {kararHepsi ? "Yalnız EVET göster" : "HAYIR ve NET DEĞİL de göster"}
+              {kararHepsi ? "Yalnız BAK ve EVET" : "HAYIR ve NET DEĞİL de göster"}
             </button>
           </div>
           {(() => {
-            const rows = (status?.alerts ?? []).filter((deal) => kararHepsi || deal.verdict === "evet");
+            const rows = (status?.alerts ?? []).filter((deal) => kararHepsi || deal.verdict === "evet" || deal.verdict === "bak");
             if (!rows.length) {
-              return <p className="empty">{kararHepsi ? `Henüz eşik geçen ürün yok. Sırada ${status?.pendingCount ?? 0} ürün var.` : "Henüz EVET yok. Diğer kararlar için üstteki düğmeye bas."}</p>;
+              return <p className="empty">{kararHepsi ? `Henüz eşik geçen ürün yok. Sırada ${status?.pendingCount ?? 0} ürün var.` : "Henüz BAK veya EVET yok. Diğer kararlar için üstteki düğmeye bas."}</p>;
             }
             return rows.map((deal) => (
               <DealCard
