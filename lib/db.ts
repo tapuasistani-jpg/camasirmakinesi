@@ -660,12 +660,13 @@ async function dropFakeUnitDeals(): Promise<void> {
     if (!fakeListPrice(String(row.title ?? ""), Number(row.last_price), num(row.list_price))) continue;
     await sql`UPDATE products SET list_price = NULL WHERE asin = ${String(row.asin)}`;
   }
-  // Piyasadan eşiğin altında kalan sahte EVET'leri sil. 4'lü Pepsi 139 / tek 42×4=168 gibi.
-  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND market_median IS NOT NULL AND price > market_median * 0.55 AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
-  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND detail LIKE 'Takip%' AND (market_median IS NULL OR market_samples = 0 OR price > COALESCE(market_median, 0) * 0.85)`;
-  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
+  // Piyasadan eşiğin altında kalan sahte EVET'leri sil. Telegram'a gidenler kalsın.
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND COALESCE(notified, 0) = 0 AND market_median IS NOT NULL AND price > market_median * 0.55 AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND COALESCE(notified, 0) = 0 AND detail LIKE 'Takip%' AND (market_median IS NULL OR market_samples = 0 OR price > COALESCE(market_median, 0) * 0.85)`;
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND COALESCE(notified, 0) = 0 AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
   await sql`DELETE FROM alerts a
     WHERE a.verdict = 'evet'
+      AND COALESCE(a.notified, 0) = 0
       AND a.detail LIKE 'Evet. Bu ürünü%'
       AND EXISTS (
         SELECT 1 FROM price_points p
