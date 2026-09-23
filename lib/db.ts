@@ -128,6 +128,8 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION`;
   await sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS dismissed INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE pending ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE watch ADD COLUMN IF NOT EXISTS high_samples INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS high_samples INT NOT NULL DEFAULT 0`;
 }
 
 export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
@@ -173,11 +175,19 @@ export async function listWatchQueries(): Promise<{ query: string; target: numbe
 
 export async function applyWatchHunt(query: string, item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
   const sql = db();
-  const rows = (await sql`SELECT highest_price, base_price, cheapest_price FROM watch_query WHERE query = ${query}`) as Row[];
+  const rows = (await sql`SELECT highest_price, base_price, cheapest_price, high_samples FROM watch_query WHERE query = ${query}`) as Row[];
   if (!rows.length) return { hit: false, base: null, target: null };
   const prevHigh = num(rows[0].highest_price) ?? num(rows[0].cheapest_price);
+  const seenHigh = num(rows[0].high_samples) ?? 0;
   const config = await getConfig();
-  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= dealThreshold(prevHigh, config.minDiscount);
+  const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount) : config.minDiscount;
+  const drop = prevHigh != null ? percentOff(item.price, prevHigh) : 0;
+  const confirmed = seenHigh >= 2;
+  const hit = drop >= gate && confirmed;
+  const adoptCheap = drop >= gate && !confirmed;
+  const nextHigh = adoptCheap ? item.price : Math.max(prevHigh ?? item.price, item.price);
+  const sameBand = prevHigh != null && !adoptCheap && Math.abs(item.price - nextHigh) / nextHigh <= 0.08;
+  const nextSamples = adoptCheap ? 1 : (sameBand || item.price >= (prevHigh ?? 0) ? seenHigh + 1 : seenHigh);
   await sql`UPDATE watch_query SET
     cheapest_asin = ${item.asin},
     cheapest_price = ${item.price},
@@ -185,7 +195,8 @@ export async function applyWatchHunt(query: string, item: ProductCard): Promise<
     url = ${item.url},
     image = COALESCE(${item.image}, image),
     base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price}),
-    highest_price = GREATEST(COALESCE(highest_price, ${item.price}), ${item.price})
+    highest_price = ${nextHigh},
+    high_samples = ${nextSamples}
     WHERE query = ${query}`;
   return { hit, base: prevHigh, target: null };
 }
@@ -198,17 +209,25 @@ export async function watchedAsins(): Promise<Set<string>> {
 // Takip edilen ürün düştü mü: hedefin altına indi ya da gördüğümüz en iyi fiyatı geçti.
 export async function watchDrop(item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
   const sql = db();
-  const rows = (await sql`SELECT highest_price, base_price FROM watch WHERE asin = ${item.asin}`) as Row[];
+  const rows = (await sql`SELECT highest_price, base_price, high_samples FROM watch WHERE asin = ${item.asin}`) as Row[];
   if (!rows.length) return { hit: false, base: null, target: null };
   const prevHigh = num(rows[0].highest_price) ?? num(rows[0].base_price);
+  const seenHigh = num(rows[0].high_samples) ?? 0;
   const config = await getConfig();
-  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= dealThreshold(prevHigh, config.minDiscount);
+  const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount) : config.minDiscount;
+  const drop = prevHigh != null ? percentOff(item.price, prevHigh) : 0;
+  const hit = drop >= gate && seenHigh >= 2;
+  const adoptCheap = drop >= gate && seenHigh < 2;
+  const nextHigh = adoptCheap ? item.price : Math.max(prevHigh ?? item.price, item.price);
+  const sameBand = prevHigh != null && !adoptCheap && Math.abs(item.price - nextHigh) / nextHigh <= 0.08;
+  const nextSamples = adoptCheap ? 1 : (sameBand || item.price >= (prevHigh ?? 0) ? seenHigh + 1 : seenHigh);
   await sql`UPDATE watch SET
     title = COALESCE(NULLIF(${item.title}, ''), title),
     url = ${item.url},
     image = COALESCE(${item.image}, image),
     base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price}),
-    highest_price = GREATEST(COALESCE(highest_price, ${item.price}), ${item.price})
+    highest_price = ${nextHigh},
+    high_samples = ${nextSamples}
     WHERE asin = ${item.asin}`;
   return { hit, base: prevHigh, target: null };
 }
@@ -581,8 +600,9 @@ async function dropFakeUnitDeals(): Promise<void> {
     await sql`UPDATE products SET list_price = NULL WHERE asin = ${String(row.asin)}`;
   }
   // Piyasadan eşiğin altında kalan sahte EVET'leri sil. 4'lü Pepsi 139 / tek 42×4=168 gibi.
-  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND market_median IS NOT NULL AND price > market_median * 0.55 AND detail NOT LIKE 'Takip%'`;
-  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%'`;
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND market_median IS NOT NULL AND price > market_median * 0.55 AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND detail LIKE 'Takip%' AND (market_median IS NULL OR market_samples = 0 OR price > COALESCE(market_median, 0) * 0.85)`;
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
 }
 
 export async function getStatus(): Promise<Status> {

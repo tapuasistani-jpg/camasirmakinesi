@@ -7,7 +7,6 @@ import {
   depoQueryLabel,
   depoSearchUrl,
   elektronikPageUrl,
-  isAccessory,
   isBlocked,
   keywordAisleUrl,
   nameSearchUrl,
@@ -45,7 +44,8 @@ import {
   writeState,
 } from "@/lib/db";
 import { judgeOne, sendOne } from "@/lib/scan";
-import { dealThreshold, percentOff } from "@/lib/verdict";
+import { searchPrices } from "@/lib/market";
+import { dealThreshold, decide, percentOff } from "@/lib/verdict";
 
 // GitHub tarafı sayfayı indirir, burası sadece okur ve sıradaki adresi söyler.
 export type Target = {
@@ -145,8 +145,27 @@ async function pingHunts(items: ProductCard[]): Promise<void> {
     if (!matches.length) continue;
     const cheapest = matches.reduce((best, item) => (item.price < best.price ? item : best));
     const drop = await applyWatchHunt(hunt.query, cheapest);
-    if (!drop.hit) continue;
-    const reference = drop.target && cheapest.price <= drop.target ? drop.target : drop.base;
+    if (!drop.hit || !drop.base) continue;
+    let marketPrices: number[] = [];
+    try {
+      marketPrices = await searchPrices(cheapest.title, cheapest.price, { list: cheapest.listPrice, high: drop.base });
+    } catch {
+      marketPrices = [];
+    }
+    const verdict = decide({
+      price: cheapest.price,
+      listPrice: cheapest.listPrice,
+      highestPrice: drop.base,
+      samples: 3,
+      marketPrices,
+      threshold: dealThreshold(drop.base, (await getConfig()).minDiscount),
+      title: cheapest.title,
+      history: [drop.base, cheapest.price],
+    });
+    if (!verdict || verdict.verdict !== "evet") {
+      await addLog("bilgi", `Takip "${hunt.query}" ${Math.round(cheapest.price)} TL, piyasaya göre fırsat değil.`);
+      continue;
+    }
     await insertAlert({
       asin: cheapest.asin,
       title: cheapest.title,
@@ -154,15 +173,9 @@ async function pingHunts(items: ProductCard[]): Promise<void> {
       image: cheapest.image,
       price: cheapest.price,
       listPrice: cheapest.listPrice,
-      highestPrice: reference,
+      highestPrice: drop.base,
       notify: true,
-      verdict: {
-        verdict: "evet",
-        discount: Math.round(percentOff(cheapest.price, reference ?? cheapest.price) * 10) / 10,
-        marketMedian: null,
-        marketSamples: 0,
-        detail: `Takip: "${hunt.query}" gördüğümüz fiyattan eşiğin üstünde düştü. Şimdi ${Math.round(cheapest.price)} TL.`,
-      },
+      verdict,
     });
     await addLog("bilgi", `Takip "${hunt.query}" düştü: ${Math.round(cheapest.price)} TL.`);
   }
@@ -231,10 +244,7 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
 }
 
 function huntMatches(items: ProductCard[], query: string): ProductCard[] {
-  const tight = items.filter((item) => titleFits(item.title, query));
-  if (tight.length) return tight;
-  // Amazon zaten bu isimle aradı. Başlık biraz farklıysa kılıf olmayan kartları al.
-  return items.filter((item) => !isAccessory(item.title) || isAccessory(query));
+  return items.filter((item) => titleFits(item.title, query));
 }
 
 async function eatHunt(label: string, html: string, items: ProductCard[]): Promise<void> {
