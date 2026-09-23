@@ -74,17 +74,21 @@ async function fastStart(label: string): Promise<Target> {
   return { kind: "reyon", label, url: aisleStartUrls(label)[0] };
 }
 
-async function aisleTarget(): Promise<Target> {
-  const state = await readState();
-  const aisle = DEPO_AISLES[state.aisleIndex % DEPO_AISLES.length];
+async function aisleByLabel(label: string): Promise<Target> {
   const cursors = await readAisleCursors();
-  const saved = cursors[aisle.label];
-  const tries = Number(await readSetting(`aisle_try_${aisle.label}`)) || 0;
-  const candidates = aisleStartUrls(aisle.label);
+  const saved = cursors[label];
+  const tries = Number(await readSetting(`aisle_try_${label}`)) || 0;
+  const candidates = aisleStartUrls(label);
   const url = saved?.url && !keywordAisleUrl(saved.url)
     ? saved.url
     : candidates[tries % candidates.length];
-  return { kind: "reyon", label: aisle.label, url };
+  return { kind: "reyon", label, url };
+}
+
+async function aisleTarget(): Promise<Target> {
+  const state = await readState();
+  const aisle = DEPO_AISLES[state.aisleIndex % DEPO_AISLES.length];
+  return aisleByLabel(aisle.label);
 }
 
 async function huntTarget(): Promise<Target> {
@@ -104,13 +108,13 @@ async function huntTarget(): Promise<Target> {
 export async function nextTarget(): Promise<Target> {
   const turn = (Number(await readSetting("feed_turn")) || 0) + 1;
   await writeSetting("feed_turn", String(turn % 1000));
-  const slot = turn % 6;
-  if (slot === 0 || slot === 3) return fastStart(FAST_AISLES[0]);
-  if (slot === 1 || slot === 4) return fastStart(FAST_AISLES[1]);
-  if (slot === 2) return huntTarget();
-  const slow = Number(await readSetting("slow_turn")) || 0;
-  await writeSetting("slow_turn", String((slow + 1) % 1000));
-  return slow % 2 === 0 ? aisleTarget() : tourTarget();
+  const slot = turn % 8;
+  if (slot === 0 || slot === 5) return fastStart("Yeni Gelenler");
+  if (slot === 1 || slot === 6) return fastStart("Günün Fırsatları");
+  if (slot === 2) return aisleByLabel("Çok Al Az Öde");
+  if (slot === 3) return aisleByLabel("Outlet");
+  if (slot === 4) return huntTarget();
+  return tourTarget();
 }
 
 async function pingHunts(items: ProductCard[]): Promise<void> {
