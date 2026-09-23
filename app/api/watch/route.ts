@@ -1,5 +1,5 @@
 import { adminOk } from "@/lib/auth";
-import { addWatch, ensureSchema, priceHistory, removeWatch } from "@/lib/db";
+import { addWatch, addWatchQuery, ensureSchema, priceHistory, removeWatch, removeWatchQuery } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,18 +13,27 @@ function asinFrom(raw: string): string {
 
 export async function POST(request: Request) {
   if (!adminOk(request)) return Response.json({ error: "yetkisiz" }, { status: 401 });
-  const body = (await request.json().catch(() => ({}))) as { item?: unknown; target?: unknown; remove?: unknown };
-  const asin = asinFrom(typeof body.item === "string" ? body.item : "");
-  if (!asin) return Response.json({ error: "Amazon linkini ya da ürün kodunu yaz" }, { status: 400 });
+  const body = (await request.json().catch(() => ({}))) as { item?: unknown; target?: unknown; remove?: unknown; query?: unknown };
+  const raw = typeof body.item === "string" ? body.item.trim() : "";
+  const asin = asinFrom(raw);
+  const query = typeof body.query === "string" ? body.query.trim() : (!asin ? raw : "");
   const target = Number(body.target);
   try {
     await ensureSchema();
     if (body.remove) {
-      await removeWatch(asin);
-      return Response.json({ ok: true, removed: asin });
+      if (query) await removeWatchQuery(query);
+      if (asin) await removeWatch(asin);
+      return Response.json({ ok: true, removed: query || asin });
     }
-    await addWatch(asin, Number.isFinite(target) && target > 0 ? target : null);
-    return Response.json({ ok: true, asin, history: await priceHistory(asin) });
+    if (asin) {
+      await addWatch(asin, Number.isFinite(target) && target > 0 ? target : null);
+      return Response.json({ ok: true, asin, history: await priceHistory(asin) });
+    }
+    if (query.length >= 3) {
+      await addWatchQuery(query, Number.isFinite(target) && target > 0 ? target : null);
+      return Response.json({ ok: true, query });
+    }
+    return Response.json({ error: "Ürün adını, Amazon linkini ya da ürün kodunu yaz" }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "takip edilemedi";
     return Response.json({ error: message }, { status: 500 });

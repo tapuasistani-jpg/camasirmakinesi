@@ -212,16 +212,16 @@ export default function Dashboard() {
     }
     setWatchInput("");
     setWatchTarget("");
-    say("Takibe alındı. Fiyatı düşerse Telegram'a yazar.", true);
+    say(data.query ? `"${data.query}" takibe alındı. Bütün satıcılarda en ucuzu kovalayacak.` : "Takibe alındı. Fiyatı düşerse Telegram'a yazar.", true);
     await load();
   }
 
-  async function watchDrop(asin: string) {
+  async function watchDrop(item: string) {
     sessionStorage.setItem("camasir-admin", password);
     await fetch("/api/watch", {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({ item: asin, remove: true }),
+      body: JSON.stringify({ item, query: item, remove: true }),
     });
     await load();
   }
@@ -390,29 +390,30 @@ export default function Dashboard() {
         <section className="panel">
           <div className="panel-head">
             <h2>Takip listem</h2>
-            <p>Amazon linkini ya da ürün kodunu yaz. Fiyatı düşerse Telegram'a yazar.</p>
+            <p>Ürün adını yazman yeter. Bütün satıcılarda en ucuzu kovalır. İstersen link de yapıştır.</p>
           </div>
           <form onSubmit={watchAdd} className="watch-form">
-            <label>Link veya ürün kodu
-              <input type="text" value={watchInput} placeholder="https://www.amazon.com.tr/dp/B0..." onChange={(event) => setWatchInput(event.target.value)} />
+            <label>Ürün adı veya link
+              <input type="text" value={watchInput} placeholder="örnek: iPhone 17 Pro Max" onChange={(event) => setWatchInput(event.target.value)} />
             </label>
             <label>Hedef fiyat (isteğe bağlı)
-              <input type="number" min={0} value={watchTarget} placeholder="örnek: 2500" onChange={(event) => setWatchTarget(event.target.value)} />
+              <input type="number" min={0} value={watchTarget} placeholder="örnek: 95000" onChange={(event) => setWatchTarget(event.target.value)} />
             </label>
             <button type="submit">Takibe al</button>
           </form>
           {status?.watch.length ? status.watch.map((item) => (
-            <article className="recent-item" key={item.asin}>
+            <article className="recent-item" key={item.query || item.asin}>
               <Photo src={item.image} />
               <div>
-                <div className="title">{item.title || item.asin}</div>
+                <div className="title">{item.title || item.query || item.asin}</div>
+                {item.query ? <span className="detail">tüm satıcılar · {item.query}</span> : null}
                 <span className="price">{tl(item.price)}</span>
                 {item.targetPrice ? <span className="detail">hedef {tl(item.targetPrice)}</span> : null}
                 {item.basePrice ? <span className="old">en iyi {tl(item.basePrice)}</span> : null}
                 <div className="row-buttons">
-                  <a href={item.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a>
-                  <button className="ghost" type="button" onClick={() => showHistory(item.asin)}>Fiyat geçmişi</button>
-                  <button className="ghost" type="button" onClick={() => watchDrop(item.asin)}>Çıkar</button>
+                  {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a> : null}
+                  {item.asin ? <button className="ghost" type="button" onClick={() => showHistory(item.asin)}>Fiyat geçmişi</button> : null}
+                  <button className="ghost" type="button" onClick={() => watchDrop(item.query || item.asin)}>Çıkar</button>
                 </div>
                 {history?.asin === item.asin ? <History rows={history.rows} /> : null}
               </div>

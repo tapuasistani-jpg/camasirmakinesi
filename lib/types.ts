@@ -34,6 +34,7 @@ export type AisleItemView = RecentView & {
 };
 
 export type WatchView = {
+  query: string;
   asin: string;
   title: string;
   url: string;

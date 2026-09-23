@@ -36,6 +36,27 @@ export function depoSearchUrl(query: string, page: number): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
+export function nameSearchUrl(query: string, depo: boolean): string {
+  const params = new URLSearchParams({ k: query.trim(), page: "1" });
+  if (depo) {
+    params.set("i", "warehouse-deals");
+    params.set("url", "search-alias=warehouse-deals");
+  }
+  return `https://www.amazon.com.tr/s?${params.toString()}`;
+}
+
+const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|stand|kılıfı|\bcase\b|\bcover\b|charger/i;
+
+export function titleFits(title: string, query: string): boolean {
+  const needle = query.trim().toLocaleLowerCase("tr-TR");
+  const hay = title.trim().toLocaleLowerCase("tr-TR");
+  if (!needle || !hay) return false;
+  const tokens = needle.split(/[^\p{L}\p{N}]+/u).filter((token) => token.length >= 2);
+  if (!tokens.length || tokens.some((token) => !hay.includes(token))) return false;
+  if (!ACCESSORY.test(needle) && ACCESSORY.test(hay)) return false;
+  return true;
+}
+
 export const DEPO_HOME = "https://www.amazon.com.tr/b?node=44219324031";
 
 export const DEPO_AISLES = [
@@ -706,4 +727,7 @@ export function assertAmazonParser(): void {
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
+  if (!titleFits("Apple iPhone 17 Pro Max 256 GB", "iPhone 17 Pro Max")) throw new Error("telefon ismi eşleşmedi");
+  if (titleFits("iPhone 17 Pro Max Silikon Kılıf", "iPhone 17 Pro Max")) throw new Error("kılıf telefon sandı");
+  if (titleFits("Apple iPhone 16 Pro Max", "iPhone 17 Pro Max")) throw new Error("başka nesil telefon sandı");
 }

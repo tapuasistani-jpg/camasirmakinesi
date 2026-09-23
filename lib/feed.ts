@@ -9,6 +9,7 @@ import {
   elektronikPageUrl,
   isBlocked,
   keywordAisleUrl,
+  nameSearchUrl,
   nextSearchPage,
   nodeFromUrl,
   nodeListingUrl,
@@ -17,13 +18,16 @@ import {
   parseSearchPage,
   scrollMoreUrl,
   seeAllResultsUrl,
+  titleFits,
 } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
+  applyWatchHunt,
   enqueuePending,
   getConfig,
   insertAlert,
+  listWatchQueries,
   needsFreshVerdict,
   readAisleCursors,
   readSetting,
@@ -42,7 +46,7 @@ import { percentOff } from "@/lib/verdict";
 
 // GitHub tarafı sayfayı indirir, burası sadece okur ve sıradaki adresi söyler.
 export type Target = {
-  kind: "tur" | "reyon";
+  kind: "tur" | "reyon" | "takip";
   label: string;
   url: string;
 };
@@ -82,15 +86,61 @@ async function aisleTarget(): Promise<Target> {
   return { kind: "reyon", label: aisle.label, url };
 }
 
+async function huntTarget(): Promise<Target> {
+  const hunts = await listWatchQueries();
+  if (!hunts.length) return tourTarget();
+  const cursor = Number(await readSetting("watch_turn")) || 0;
+  const hunt = hunts[cursor % hunts.length];
+  await writeSetting("watch_turn", String((cursor + 1) % 1000));
+  const depo = cursor % 2 === 1;
+  return {
+    kind: "takip",
+    label: hunt.query,
+    url: nameSearchUrl(hunt.query, depo),
+  };
+}
+
 export async function nextTarget(): Promise<Target> {
   const turn = (Number(await readSetting("feed_turn")) || 0) + 1;
   await writeSetting("feed_turn", String(turn % 1000));
   const slot = turn % 6;
-  // 6 turda 4 kez taze reyonun ilk sayfası. Rakipler orayı dakikada bir bakıyor.
-  if (slot === 0 || slot === 2) return fastStart(FAST_AISLES[0]);
+  if (slot === 0 || slot === 3) return fastStart(FAST_AISLES[0]);
   if (slot === 1 || slot === 4) return fastStart(FAST_AISLES[1]);
-  if (slot === 3) return aisleTarget();
-  return tourTarget();
+  if (slot === 2) return huntTarget();
+  const slow = Number(await readSetting("slow_turn")) || 0;
+  await writeSetting("slow_turn", String((slow + 1) % 1000));
+  return slow % 2 === 0 ? aisleTarget() : tourTarget();
+}
+
+async function pingHunts(items: ProductCard[]): Promise<void> {
+  const hunts = await listWatchQueries();
+  if (!hunts.length) return;
+  for (const hunt of hunts) {
+    const matches = items.filter((item) => titleFits(item.title, hunt.query));
+    if (!matches.length) continue;
+    const cheapest = matches.reduce((best, item) => (item.price < best.price ? item : best));
+    const drop = await applyWatchHunt(hunt.query, cheapest);
+    if (!drop.hit) continue;
+    const reference = drop.target && cheapest.price <= drop.target ? drop.target : drop.base;
+    await insertAlert({
+      asin: cheapest.asin,
+      title: cheapest.title,
+      url: cheapest.url,
+      image: cheapest.image,
+      price: cheapest.price,
+      listPrice: cheapest.listPrice,
+      highestPrice: reference,
+      notify: true,
+      verdict: {
+        verdict: "evet",
+        discount: Math.round(percentOff(cheapest.price, reference ?? cheapest.price) * 10) / 10,
+        marketMedian: null,
+        marketSamples: 0,
+        detail: `Takip: "${hunt.query}" için Amazon'daki en ucuz satıcı ${Math.round(cheapest.price)} TL.`,
+      },
+    });
+    await addLog("bilgi", `Takip "${hunt.query}" düştü: ${Math.round(cheapest.price)} TL.`);
+  }
 }
 
 async function remember(items: ProductCard[], minDiscount: number): Promise<number> {
@@ -129,7 +179,20 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
     if (!(await needsFreshVerdict(item.asin, item.price))) continue;
     await enqueuePending(item, memory);
   }
+  await pingHunts(items);
   return count;
+}
+
+async function eatHunt(label: string, html: string, items: ProductCard[]): Promise<void> {
+  const matches = items.filter((item) => titleFits(item.title, label));
+  const config = await getConfig();
+  if (matches.length) await remember(matches, config.minDiscount);
+  const cheapest = matches.reduce((best: ProductCard | null, item) => (!best || item.price < best.price ? item : best), null);
+  if (!cheapest) {
+    await addLog("uyari", `Takip · "${label}" aramasında uygun ürün yok. ${pageSummary(html)}`);
+    return;
+  }
+  await addLog("bilgi", `Takip · "${label}" en ucuz satıcı ${Math.round(cheapest.price)} TL · ${matches.length} ilan.`);
 }
 
 async function eatTour(url: string, html: string, items: ProductCard[]): Promise<void> {
@@ -244,7 +307,8 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
     await addLog("uyari", `Sayfa okunamadı. ${pageSummary(html)}`);
   } else {
     items = parseSearchPage(html);
-    if (input.kind === "reyon") await eatAisle(url, html, items, input.label);
+    if (input.kind === "takip") await eatHunt(input.label || "", html, items);
+    else if (input.kind === "reyon") await eatAisle(url, html, items, input.label);
     else await eatTour(url, html, items);
   }
   const judged = await judgeOne();

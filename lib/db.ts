@@ -113,6 +113,17 @@ async function migrate(): Promise<void> {
     base_price DOUBLE PRECISION,
     added_at TIMESTAMPTZ DEFAULT NOW()
   )`;
+  await sql`CREATE TABLE IF NOT EXISTS watch_query (
+    query TEXT PRIMARY KEY,
+    target_price DOUBLE PRECISION,
+    base_price DOUBLE PRECISION,
+    cheapest_asin TEXT,
+    cheapest_price DOUBLE PRECISION,
+    title TEXT,
+    url TEXT,
+    image TEXT,
+    added_at TIMESTAMPTZ DEFAULT NOW()
+  )`;
 }
 
 export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
@@ -131,8 +142,45 @@ export async function addWatch(asin: string, targetPrice: number | null): Promis
     ON CONFLICT (asin) DO UPDATE SET target_price = EXCLUDED.target_price`;
 }
 
-export async function removeWatch(asin: string): Promise<void> {
-  await db()`DELETE FROM watch WHERE asin = ${asin}`;
+export async function addWatchQuery(query: string, targetPrice: number | null): Promise<void> {
+  const name = query.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (name.length < 3) throw new Error("ürün adını biraz daha uzun yaz");
+  await db()`INSERT INTO watch_query (query, target_price)
+    VALUES (${name}, ${targetPrice})
+    ON CONFLICT (query) DO UPDATE SET target_price = EXCLUDED.target_price`;
+}
+
+export async function removeWatchQuery(query: string): Promise<void> {
+  await db()`DELETE FROM watch_query WHERE query = ${query}`;
+}
+
+export async function listWatchQueries(): Promise<{ query: string; target: number | null; base: number | null }[]> {
+  const rows = (await db()`SELECT query, target_price, base_price FROM watch_query ORDER BY added_at ASC`) as Row[];
+  return rows.map((row) => ({
+    query: String(row.query),
+    target: num(row.target_price),
+    base: num(row.base_price),
+  }));
+}
+
+export async function applyWatchHunt(query: string, item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
+  const sql = db();
+  const rows = (await sql`SELECT target_price, base_price, cheapest_price FROM watch_query WHERE query = ${query}`) as Row[];
+  if (!rows.length) return { hit: false, base: null, target: null };
+  const target = num(rows[0].target_price);
+  const base = num(rows[0].base_price);
+  const previous = num(rows[0].cheapest_price);
+  const floor = base ?? previous;
+  const hit = (target != null && item.price <= target) || (floor != null && item.price <= floor * 0.95);
+  await sql`UPDATE watch_query SET
+    cheapest_asin = ${item.asin},
+    cheapest_price = ${item.price},
+    title = ${item.title},
+    url = ${item.url},
+    image = COALESCE(${item.image}, image),
+    base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price})
+    WHERE query = ${query}`;
+  return { hit, base: floor, target };
 }
 
 export async function watchedAsins(): Promise<Set<string>> {
@@ -539,19 +587,34 @@ export async function getStatus(): Promise<Status> {
   });
   const watchRows = (await sql`SELECT w.asin, w.title, w.url, w.image, w.target_price, w.base_price, p.last_price
     FROM watch w LEFT JOIN products p ON p.asin = w.asin ORDER BY w.added_at DESC LIMIT 30`) as Row[];
+  const huntRows = (await sql`SELECT query, title, url, image, target_price, base_price, cheapest_asin, cheapest_price
+    FROM watch_query ORDER BY added_at DESC LIMIT 30`) as Row[];
   const waiting = (await sql`SELECT COUNT(*)::int AS n FROM pending`) as Row[];
   return {
     aisleAlerts: aisleAlerts.map(alertView),
     pendingCount: num(waiting[0]?.n) ?? 0,
-    watch: watchRows.map((row) => ({
-      asin: String(row.asin),
-      title: String(row.title ?? ""),
-      url: String(row.url ?? ""),
-      image: row.image ? String(row.image) : null,
-      price: num(row.last_price),
-      basePrice: num(row.base_price),
-      targetPrice: num(row.target_price),
-    })),
+    watch: [
+      ...huntRows.map((row) => ({
+        query: String(row.query),
+        asin: String(row.cheapest_asin ?? ""),
+        title: String(row.title || row.query),
+        url: String(row.url || ""),
+        image: row.image ? String(row.image) : null,
+        price: num(row.cheapest_price),
+        basePrice: num(row.base_price),
+        targetPrice: num(row.target_price),
+      })),
+      ...watchRows.map((row) => ({
+        query: "",
+        asin: String(row.asin),
+        title: String(row.title ?? ""),
+        url: String(row.url ?? ""),
+        image: row.image ? String(row.image) : null,
+        price: num(row.last_price),
+        basePrice: num(row.base_price),
+        targetPrice: num(row.target_price),
+      })),
+    ],
     ready: true,
     message: "",
     page: state.page,
