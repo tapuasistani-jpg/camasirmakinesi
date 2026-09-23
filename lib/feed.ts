@@ -78,7 +78,12 @@ async function tourTarget(): Promise<Target> {
   let page = state.page;
   if (page <= 1 && !state.nextUrl) {
     const resume = Number(await readSetting(`tour_resume_${depoQueryLabel(query)}`)) || 0;
-    if (resume > 1) page = resume;
+    if (resume > 1) {
+      page = resume;
+      await writeSetting("tour_resumed", "1");
+      await writeSetting("tour_stint", "0");
+      await writeState(page, state.queryIndex, null, null, state.queryText);
+    }
   }
   let url = state.nextUrl;
   if (flip && url && !/[?&](?:page|pg)=\d/.test(url) && !/sr_pg_\d/.test(url)) url = null;
@@ -287,6 +292,7 @@ async function eatTour(url: string, html: string, items: ProductCard[]): Promise
     await addLog("bilgi", `Amazon Depo "${label}" ${why} Sonraki kategori.`);
     await writeSetting("tour_mark", "");
     await writeSetting("tour_stint", "0");
+    await writeSetting("tour_resumed", "");
     await writeSetting(`tour_resume_${label}`, String(resumePage > 1 ? resumePage : 1));
     const current = DEPO_QUERIES.findIndex((name) => name.toLowerCase() === label.toLowerCase());
     const index = (current >= 0 ? current + 1 : state.queryIndex + 1) % DEPO_QUERIES.length;
@@ -313,7 +319,8 @@ async function eatTour(url: string, html: string, items: ProductCard[]): Promise
   }
   const stint = (Number(await readSetting("tour_stint")) || 0) + 1;
   await writeSetting("tour_stint", String(stint));
-  if (stint >= TOUR_STINT) {
+  const resumed = (await readSetting("tour_resumed")) === "1";
+  if (stint >= TOUR_STINT || (!resumed && page >= TOUR_STINT)) {
     await nextCategory(`sayfa ${page}: ${seen} ürün. Altı sayfa bakıldı, sıradaki kategoriye geçiliyor.`, page + 1);
     return;
   }
