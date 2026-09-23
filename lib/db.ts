@@ -130,6 +130,7 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE pending ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE watch ADD COLUMN IF NOT EXISTS high_samples INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS high_samples INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS hunt_tried_at TIMESTAMPTZ`;
 }
 
 export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
@@ -164,14 +165,30 @@ export async function removeWatchQuery(query: string): Promise<void> {
   await db()`DELETE FROM watch_query WHERE query = ${query}`;
 }
 
-export async function listWatchQueries(): Promise<{ query: string; target: number | null; base: number | null; price: number | null }[]> {
-  const rows = (await db()`SELECT query, target_price, base_price, cheapest_price FROM watch_query ORDER BY added_at ASC`) as Row[];
+export async function listWatchQueries(): Promise<{
+  query: string;
+  target: number | null;
+  base: number | null;
+  price: number | null;
+  triedAt: number | null;
+}[]> {
+  const rows = (await db()`SELECT query, target_price, base_price, cheapest_price, hunt_tried_at FROM watch_query ORDER BY added_at ASC`) as Row[];
   return rows.map((row) => ({
     query: String(row.query),
     target: num(row.target_price),
     base: num(row.base_price),
     price: num(row.cheapest_price),
+    triedAt: row.hunt_tried_at ? new Date(String(row.hunt_tried_at)).getTime() : null,
   }));
+}
+
+export async function touchWatchHunt(query: string): Promise<void> {
+  await db()`UPDATE watch_query SET hunt_tried_at = NOW() WHERE query = ${query}`;
+}
+
+export async function abandonWatchSeed(asin: string): Promise<void> {
+  await db()`UPDATE watch_query SET cheapest_asin = NULL
+    WHERE cheapest_asin = ${asin} AND (cheapest_price IS NULL OR cheapest_price <= 0)`;
 }
 
 export async function applyWatchHunt(query: string, item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
@@ -457,11 +474,13 @@ export async function seedWatchAsin(query: string, item: { asin: string; title: 
 
 export async function nextRecheck(): Promise<{ asin: string; title: string; url: string } | null> {
   const missing = (await db()`
-    SELECT cheapest_asin AS asin, COALESCE(NULLIF(title, ''), query) AS title, url
-    FROM watch_query
-    WHERE cheapest_asin IS NOT NULL
-      AND (cheapest_price IS NULL OR cheapest_price <= 0)
-    ORDER BY added_at ASC
+    SELECT q.cheapest_asin AS asin, COALESCE(NULLIF(q.title, ''), q.query) AS title, q.url
+    FROM watch_query q
+    LEFT JOIN products p ON p.asin = q.cheapest_asin
+    WHERE q.cheapest_asin IS NOT NULL
+      AND (q.cheapest_price IS NULL OR q.cheapest_price <= 0)
+      AND (p.last_seen IS NULL OR p.last_seen < NOW() - INTERVAL '2 hours')
+    ORDER BY q.added_at ASC
     LIMIT 1
   `) as Row[];
   if (missing[0]?.asin) {

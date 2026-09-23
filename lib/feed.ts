@@ -26,6 +26,7 @@ import {
 import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
+  abandonWatchSeed,
   applyWatchHunt,
   enqueuePending,
   getConfig,
@@ -38,6 +39,7 @@ import {
   readSetting,
   readState,
   tagAisle,
+  touchWatchHunt,
   upsertProduct,
   watchDrop,
   watchedAsins,
@@ -100,18 +102,22 @@ async function aisleTarget(): Promise<Target> {
 async function huntTarget(): Promise<Target> {
   const hunts = await listWatchQueries();
   if (!hunts.length) return tourTarget();
-  const missing = hunts.filter((hunt) => hunt.price == null || hunt.price < huntFloor(hunt.query));
-  const pool = missing.length ? missing : hunts;
+  const fresh = Date.now() - 45 * 60 * 1000;
+  const missing = hunts.filter((hunt) => {
+    const empty = hunt.price == null || hunt.price < huntFloor(hunt.query);
+    return empty && (hunt.triedAt == null || hunt.triedAt < fresh);
+  });
+  if (!missing.length) return tourTarget();
   const cursor = Number(await readSetting("watch_turn")) || 0;
   const seen = new Set<string>();
   const batch: { query: string }[] = [];
-  for (let step = 0; step < pool.length && batch.length < 6; step += 1) {
-    const hunt = pool[(cursor + step) % pool.length];
+  for (let step = 0; step < missing.length && batch.length < 2; step += 1) {
+    const hunt = missing[(cursor + step) % missing.length];
     if (seen.has(hunt.query)) continue;
     seen.add(hunt.query);
     batch.push(hunt);
   }
-  await writeSetting("watch_turn", String((cursor + batch.length) % Math.max(pool.length, 1)));
+  await writeSetting("watch_turn", String((cursor + batch.length) % Math.max(missing.length, 1)));
   const pack: Target[] = [];
   for (const hunt of batch) {
     pack.push({ kind: "takip", label: hunt.query, url: nameSearchUrl(hunt.query, false) });
@@ -132,10 +138,11 @@ export async function nextTarget(): Promise<Target> {
   const turn = (Number(await readSetting("feed_turn")) || 0) + 1;
   await writeSetting("feed_turn", String(turn % 1000));
   const slot = turn % 8;
-  if (slot === 0 || slot === 4) return recheckTarget();
-  if (slot === 1 || slot === 7) return huntTarget();
+  if (slot === 0) return recheckTarget();
+  if (slot === 1) return huntTarget();
   if (slot === 2) return fastStart("Yeni Gelenler");
   if (slot === 3) return aisleByLabel("Çok Al Az Öde");
+  if (slot === 4) return tourTarget();
   if (slot === 5) return aisleByLabel("Outlet");
   if (slot === 6) return fastStart("Günün Fırsatları");
   return tourTarget();
@@ -252,6 +259,7 @@ function huntMatches(items: ProductCard[], query: string): ProductCard[] {
 }
 
 async function eatHunt(label: string, html: string, items: ProductCard[]): Promise<void> {
+  await touchWatchHunt(label);
   const matches = huntMatches(items, label);
   const config = await getConfig();
   if (matches.length) await remember(matches, config.minDiscount);
@@ -398,7 +406,10 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
         const config = await getConfig();
         await remember([one], config.minDiscount);
         await addLog("bilgi", `Tekrar bakıldı: ${one.title.slice(0, 70)} · ${Math.round(one.price)} TL`);
+        if (one.price < 3000) await abandonWatchSeed(one.asin);
       } else {
+        const broken = url.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i)?.[1];
+        if (broken) await abandonWatchSeed(broken.toUpperCase());
         await addLog("uyari", `Ürün sayfası okunamadı. ${pageSummary(html)}`);
       }
     } else if (input.kind === "takip") await eatHunt(input.label || "", html, items);

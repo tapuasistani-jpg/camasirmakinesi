@@ -63,7 +63,7 @@ function tokenIn(hay: string, token: string): boolean {
   if (hay.includes(token)) return true;
   if (token === "ps5" && hay.includes("playstation 5")) return true;
   if (token === "ps4" && hay.includes("playstation 4")) return true;
-  if (token === "rtx" && (hay.includes("geforce") || hay.includes("rtx"))) return true;
+  if (token === "rtx" && hay.includes("rtx")) return true;
   if (token === "oled" && (hay.includes("oled") || hay.includes("qled"))) return true;
   const glued = token.match(/^([a-z]+)(\d{1,4})$/);
   if (glued && new RegExp(`${glued[1]}[\\s\\-]*${glued[2]}`).test(hay)) return true;
@@ -95,16 +95,20 @@ export function huntFloor(query: string): number {
   return 200;
 }
 
+function huntJunk(title: string): boolean {
+  return /\bvs\b|unveiling|poster|afis|afi[sş]|unboxing|kitap\b/.test(fold(title));
+}
+
 export function huntPick(items: ProductCard[], query: string): ProductCard[] {
   const floor = huntFloor(query);
-  const tight = items.filter((item) => titleFits(item.title, query) && item.price >= floor);
+  const tight = items.filter((item) => titleFits(item.title, query) && item.price >= floor && !huntJunk(item.title));
   if (tight.length) return tight;
   const keys = fold(query)
     .split(/[^\p{L}\p{N}]+/u)
     .filter((token) => token.length >= 2 && (/\d/.test(token) || /iphone|airpods|xbox|nintendo|oled|rtx|watch|switch/.test(token)));
   if (!keys.length) return [];
   return items.filter((item) => {
-    if (item.price < floor || isAccessory(item.title)) return false;
+    if (item.price < floor || isAccessory(item.title) || huntJunk(item.title)) return false;
     const hay = fold(item.title);
     return keys.every((token) => tokenIn(hay, token));
   });
@@ -662,7 +666,7 @@ export function huntAsinsFromHtml(html: string, query: string): { asin: string; 
       || node.attr("aria-label")
       || node.text(),
     );
-    if (title.length < 3 || !titleFits(title, query)) return;
+    if (title.length < 3 || !titleFits(title, query) || huntJunk(title)) return;
     seen.add(asin);
     found.push({ asin, title: title.slice(0, 300), url: `https://www.amazon.com.tr/dp/${asin}` });
   });
@@ -913,5 +917,16 @@ export function assertAmazonParser(): void {
   if (!jsonProduct || jsonProduct.price !== 89999) throw new Error("ürün sayfası json fiyatı kaçtı");
   if (huntPick([{ asin: "B0FAKEWATCH", title: "Watch Ultra Privacy", price: 301, listPrice: null, image: null, condition: "", url: "" }], "Apple Watch Ultra").length) {
     throw new Error("ucuz film takip fiyatı oldu");
+  }
+  if (huntPick([{
+    asin: "B0POSTER409",
+    title: "Nvidia GeForce GTX 4090 vs AMD Radeon RX 7900 XT Unveiling the Graph",
+    price: 1001,
+    listPrice: null,
+    image: null,
+    condition: "",
+    url: "",
+  }], "RTX 4090").length) {
+    throw new Error("4090 posteri ekran kartı sandı");
   }
 }
