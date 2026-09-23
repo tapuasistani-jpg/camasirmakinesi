@@ -82,6 +82,7 @@ export default function Dashboard() {
   const [customCategory, setCustomCategory] = useState("");
   const [screen, setScreen] = useState<"depo" | "reyon">("depo");
   const [kararHepsi, setKararHepsi] = useState(false);
+  const [watchInput, setWatchInput] = useState("");
   const [history, setHistory] = useState<{ asin: string; rows: { price: number; seenAt: string | null }[] } | null>(null);
   const [lookup, setLookup] = useState("");
   const [looking, setLooking] = useState(false);
