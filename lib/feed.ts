@@ -131,8 +131,8 @@ async function huntTarget(): Promise<Target> {
 async function recheckTarget(): Promise<Target> {
   const batch = await nextRechecks(3);
   if (!batch.length) return tourTarget();
-  const pack = batch.map((item) => ({
-    kind: "urun" as const,
+  const pack: Target[] = batch.map((item) => ({
+    kind: "urun",
     label: item.title.slice(0, 50) || item.asin,
     url: item.url,
   }));
