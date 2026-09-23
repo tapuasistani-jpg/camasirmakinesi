@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 
-import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice, huntFloor } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
 import { dealThreshold, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
@@ -446,7 +446,31 @@ export async function takePending(): Promise<Row | null> {
   return rows[0] ?? null;
 }
 
+export async function seedWatchAsin(query: string, item: { asin: string; title: string; url: string }): Promise<void> {
+  await db()`UPDATE watch_query SET
+    cheapest_asin = ${item.asin},
+    title = COALESCE(NULLIF(title, ''), ${item.title}),
+    url = ${item.url}
+    WHERE query = ${query} AND (cheapest_price IS NULL OR cheapest_price <= 0)`;
+}
+
 export async function nextRecheck(): Promise<{ asin: string; title: string; url: string } | null> {
+  const missing = (await db()`
+    SELECT cheapest_asin AS asin, COALESCE(NULLIF(title, ''), query) AS title, url
+    FROM watch_query
+    WHERE cheapest_asin IS NOT NULL
+      AND (cheapest_price IS NULL OR cheapest_price <= 0)
+    ORDER BY added_at ASC
+    LIMIT 1
+  `) as Row[];
+  if (missing[0]?.asin) {
+    const asin = String(missing[0].asin);
+    return {
+      asin,
+      title: String(missing[0].title ?? ""),
+      url: String(missing[0].url || `https://www.amazon.com.tr/dp/${asin}`),
+    };
+  }
   const rows = (await db()`
     SELECT p.asin, p.title, p.url, p.last_price
     FROM products p
@@ -658,7 +682,11 @@ export async function getStatus(): Promise<Status> {
         title: String(row.title || row.query),
         url: String(row.url || ""),
         image: row.image ? String(row.image) : null,
-        price: num(row.cheapest_price),
+        price: (() => {
+          const value = num(row.cheapest_price);
+          if (value == null) return null;
+          return value < huntFloor(String(row.query)) ? null : value;
+        })(),
         basePrice: num(row.base_price),
         targetPrice: num(row.target_price),
       })),

@@ -9,6 +9,8 @@ import {
   elektronikPageUrl,
   isBlocked,
   keywordAisleUrl,
+  huntAsinsFromHtml,
+  huntPick,
   nameSearchUrl,
   nextSearchPage,
   nodeFromUrl,
@@ -19,7 +21,6 @@ import {
   parseSearchPage,
   scrollMoreUrl,
   seeAllResultsUrl,
-  titleFits,
 } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import {
@@ -32,6 +33,7 @@ import {
   needsFreshVerdict,
   nextRecheck,
   readAisleCursors,
+  seedWatchAsin,
   readSetting,
   readState,
   tagAisle,
@@ -100,21 +102,20 @@ async function huntTarget(): Promise<Target> {
   const cursor = Number(await readSetting("watch_turn")) || 0;
   const seen = new Set<string>();
   const batch: { query: string }[] = [];
-  for (let step = 0; step < hunts.length && batch.length < 3; step += 1) {
+  for (let step = 0; step < hunts.length && batch.length < 5; step += 1) {
     const hunt = hunts[(cursor + step) % hunts.length];
     if (seen.has(hunt.query)) continue;
     seen.add(hunt.query);
     batch.push(hunt);
   }
-  await writeSetting("watch_turn", String((cursor + batch.length) % 1000));
-  const depo = cursor % 2 === 1;
-  const toTarget = (hunt: { query: string }): Target => ({
-    kind: "takip",
-    label: hunt.query,
-    url: nameSearchUrl(hunt.query, depo),
-  });
-  const main = toTarget(batch[0]);
-  main.extra = batch.slice(1).map(toTarget);
+  await writeSetting("watch_turn", String((cursor + batch.length) % Math.max(hunts.length, 1)));
+  const pack: Target[] = [];
+  for (const hunt of batch) {
+    pack.push({ kind: "takip", label: hunt.query, url: nameSearchUrl(hunt.query, false) });
+    pack.push({ kind: "takip", label: hunt.query, url: nameSearchUrl(hunt.query, true) });
+  }
+  const main = pack[0];
+  main.extra = pack.slice(1);
   return main;
 }
 
@@ -141,7 +142,7 @@ async function pingHunts(items: ProductCard[]): Promise<void> {
   const hunts = await listWatchQueries();
   if (!hunts.length) return;
   for (const hunt of hunts) {
-    const matches = items.filter((item) => titleFits(item.title, hunt.query));
+    const matches = huntPick(items, hunt.query);
     if (!matches.length) continue;
     const cheapest = matches.reduce((best, item) => (item.price < best.price ? item : best));
     const drop = await applyWatchHunt(hunt.query, cheapest);
@@ -244,7 +245,7 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
 }
 
 function huntMatches(items: ProductCard[], query: string): ProductCard[] {
-  return items.filter((item) => titleFits(item.title, query));
+  return huntPick(items, query);
 }
 
 async function eatHunt(label: string, html: string, items: ProductCard[]): Promise<void> {
@@ -253,6 +254,12 @@ async function eatHunt(label: string, html: string, items: ProductCard[]): Promi
   if (matches.length) await remember(matches, config.minDiscount);
   const cheapest = matches.reduce((best: ProductCard | null, item) => (!best || item.price < best.price ? item : best), null);
   if (!cheapest) {
+    const bare = huntAsinsFromHtml(html, label);
+    if (bare[0]) {
+      await seedWatchAsin(label, bare[0]);
+      await addLog("bilgi", `Takip · "${label}" ürün bulundu, fiyat kartta yok. Ürün sayfasına bakılacak.`);
+      return;
+    }
     await addLog("uyari", `Takip · "${label}" ${items.length} ürün okundu, uygun yok. ${pageSummary(html)}`);
     return;
   }

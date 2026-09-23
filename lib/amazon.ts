@@ -45,7 +45,7 @@ export function nameSearchUrl(query: string, depo: boolean): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
-const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|stand|kılıfı|\bcase\b|\bcover\b|charger|klavye|1 arada|aksesuar/i;
+const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|ekran filmi|gizlilik|privacy|uyumlu|stand|kılıfı|\bcase\b|\bcover\b|charger|klavye|1 arada|aksesuar/i;
 
 function fold(text: string): string {
   return text
@@ -79,6 +79,22 @@ export function titleFits(title: string, query: string): boolean {
   if (!tokens.length || tokens.some((token) => !tokenIn(hay, token))) return false;
   if (!isAccessory(query) && isAccessory(title)) return false;
   return true;
+}
+
+export function huntFloor(query: string): number {
+  const q = fold(query);
+  if (/iphone|galaxy z|galaxy s2|pixel/.test(q)) return 15000;
+  if (/rtx|radeon/.test(q)) return 15000;
+  if (/oled|qled|televizyon/.test(q)) return 8000;
+  if (/playstation|xbox|nintendo|switch|\bps5\b/.test(q)) return 5000;
+  if (/airpods|watch/.test(q)) return 4000;
+  if (/legion|rog strix|macbook|laptop/.test(q)) return 15000;
+  return 200;
+}
+
+export function huntPick(items: ProductCard[], query: string): ProductCard[] {
+  const floor = huntFloor(query);
+  return items.filter((item) => titleFits(item.title, query) && item.price >= floor);
 }
 
 export const DEPO_HOME = "https://www.amazon.com.tr/b?node=44219324031";
@@ -609,6 +625,34 @@ export function parseSearchPage(html: string): ProductCard[] {
   return found.length ? found : parseStorePage(html);
 }
 
+export function huntAsinsFromHtml(html: string, query: string): { asin: string; title: string; url: string }[] {
+  const $ = cheerio.load(html);
+  const found: { asin: string; title: string; url: string }[] = [];
+  const seen = new Set<string>();
+  $("[data-asin], a[href*='/dp/']").each((_, element) => {
+    const node = $(element);
+    const href = node.attr("href") || node.find("a[href*='/dp/']").first().attr("href") || "";
+    const asin = (
+      (node.attr("data-asin") || "").trim()
+      || href.match(/\/dp\/([A-Z0-9]{10})/i)?.[1]
+      || ""
+    ).toUpperCase();
+    if (!/^[A-Z0-9]{10}$/.test(asin) || seen.has(asin)) return;
+    const title = clean(
+      node.find("h2").first().attr("aria-label")
+      || node.find("h2 span").first().text()
+      || node.find("h2").first().text()
+      || node.find("img[alt]").first().attr("alt")
+      || node.attr("aria-label")
+      || node.text(),
+    );
+    if (title.length < 3 || !titleFits(title, query)) return;
+    seen.add(asin);
+    found.push({ asin, title: title.slice(0, 300), url: `https://www.amazon.com.tr/dp/${asin}` });
+  });
+  return found;
+}
+
 export function parseProductPage(html: string, pageUrl: string): ProductCard | null {
   const $ = cheerio.load(html);
   const fromUrl = pageUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
@@ -809,4 +853,11 @@ export function assertAmazonParser(): void {
   if (!titleFits("Sony PlayStation 5 Pro Konsol", "PS5 Pro")) throw new Error("PS5 adı eşleşmedi");
   if (titleFits("iPhone 17 Pro Max Silikon Kılıf", "iPhone 17 Pro Max")) throw new Error("kılıf telefon sandı");
   if (titleFits("Apple iPhone 16 Pro Max", "iPhone 17 Pro Max")) throw new Error("başka nesil telefon sandı");
+  if (titleFits("CONSTREIN Apple ile uyumlu Watch Ultra Privacy", "Apple Watch Ultra")) {
+    throw new Error("watch filmi saati sandı");
+  }
+  if (huntFloor("iPhone 17 Pro Max") < 10000) throw new Error("telefon tabanı düşük");
+  if (huntPick([{ asin: "B0FAKEWATCH", title: "Watch Ultra Privacy", price: 301, listPrice: null, image: null, condition: "", url: "" }], "Apple Watch Ultra").length) {
+    throw new Error("ucuz film takip fiyatı oldu");
+  }
 }
