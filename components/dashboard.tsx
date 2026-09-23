@@ -101,7 +101,7 @@ export default function Dashboard() {
   }, []);
 
   async function load() {
-    const response = await fetch("/api/status", { cache: "no-store" });
+    const response = await fetch(`/api/status?t=${Date.now()}`, { cache: "no-store" });
     const data = (await response.json()) as Status;
     setStatus(data);
     if (!filled.current && data.ready) {
@@ -113,10 +113,31 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    load().catch(() => setNote("Site durumu okunamadı"));
-    const timer = setInterval(() => load().catch(() => undefined), 8000);
-    return () => clearInterval(timer);
-  }, []);
+    if (!authed) return undefined;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const tick = () => load().catch(() => undefined);
+    const start = () => {
+      if (timer) clearInterval(timer);
+      tick();
+      timer = setInterval(tick, 3000);
+    };
+    const onVisible = () => {
+      if (document.hidden) {
+        if (timer) clearInterval(timer);
+        timer = undefined;
+        return;
+      }
+      start();
+    };
+    start();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", tick);
+    return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", tick);
+    };
+  }, [authed]);
 
   function headers(): HeadersInit {
     return { "Content-Type": "application/json", "x-admin-user": username, "x-admin-password": password };
