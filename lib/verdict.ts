@@ -141,13 +141,13 @@ export function decide(input: {
       detail: `Hayır. Çizili fiyata göre %${Math.round(listOff)} indirim var ama piyasa ortası ${tl(median)} TL. Amazon fiyatı buna yakın, etiket şişirilmiş olabilir.`,
     };
   }
-  if (memoryOff >= input.threshold && input.samples >= 3 && input.highestPrice) {
+  if (memoryOff >= input.threshold && input.samples >= 2 && trustedHigh) {
     return {
-      verdict: "kararsiz",
+      verdict: "evet",
       discount: Math.round(memoryOff * 10) / 10,
       marketMedian: null,
       marketSamples: 0,
-      detail: `Net değil. Bu ürünü ${tl(input.highestPrice)} TL görmüştük, şimdi ${tl(input.price)} TL. Piyasada karşılaştıracak fiyat çıkmadı, kendin bakmalısın.`,
+      detail: `Evet. Bu ürünü ${tl(trustedHigh)} TL görmüştük, şimdi ${tl(input.price)} TL. Hafızadaki gerçek satıştan eşiğin üstünde düştü.`,
     };
   }
   return {
@@ -164,6 +164,16 @@ export function assertVerdicts(): void {
   const no = decide({ price: 7000, listPrice: 40000, highestPrice: 7000, samples: 1, marketPrices: [7100, 6900, 7200], threshold: 80 });
   const memory = decide({ price: 1000, listPrice: 1000, highestPrice: 9000, samples: 3, marketPrices: [], threshold: 80 });
   if (memory !== null) throw new Error("tek yüksek 9000 gerçek satış sandı");
+  const selpak = decide({
+    price: 47,
+    listPrice: 47,
+    highestPrice: 156,
+    samples: 4,
+    marketPrices: [],
+    threshold: 50,
+    history: [156, 156, 150, 47],
+  });
+  if (selpak?.verdict !== "evet") throw new Error("156'dan 47'ye düşen ürün bekledi");
   const fakeWas = decide({
     price: 139,
     listPrice: 550,

@@ -9,7 +9,7 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   if (!scanOk(request)) return Response.json({ error: "yetkisiz" }, { status: 401 });
   const body = (await request.json().catch(() => ({}))) as { kind?: unknown; url?: unknown; html?: unknown; label?: unknown };
-  const kind = body.kind === "reyon" || body.kind === "takip" ? body.kind : "tur";
+  const kind = body.kind === "reyon" || body.kind === "takip" || body.kind === "urun" ? body.kind : "tur";
   const url = typeof body.url === "string" ? body.url : "";
   const html = typeof body.html === "string" ? body.html : "";
   const label = typeof body.label === "string" ? body.label : "";

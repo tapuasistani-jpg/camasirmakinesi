@@ -99,6 +99,8 @@ export async function judgeOne(): Promise<number> {
   const samples = Number(pending.samples ?? 1);
   const config = await getConfig();
   if (tries >= 3) {
+    const memoryOff = percentOff(price, highest);
+    const memoryHit = samples >= 2 && memoryOff >= config.minDiscount;
     await insertAlert({
       asin,
       title: String(pending.title ?? ""),
@@ -107,14 +109,22 @@ export async function judgeOne(): Promise<number> {
       price,
       listPrice,
       highestPrice: highest,
-      notify: false,
-      verdict: {
-        verdict: "kararsiz",
-        discount: Math.round(percentOff(price, listPrice) * 10) / 10,
-        marketMedian: null,
-        marketSamples: 0,
-        detail: "Net değil. Piyasa araması üç kez sonuç vermedi.",
-      },
+      notify: memoryHit,
+      verdict: memoryHit
+        ? {
+          verdict: "evet",
+          discount: Math.round(memoryOff * 10) / 10,
+          marketMedian: null,
+          marketSamples: 0,
+          detail: `Evet. Bu ürünü ${Math.round(Number(highest))} TL görmüştük, şimdi ${Math.round(price)} TL. Piyasa araması cevap vermedi, hafıza düşüşü eşiği geçti.`,
+        }
+        : {
+          verdict: "kararsiz",
+          discount: Math.round(percentOff(price, listPrice) * 10) / 10,
+          marketMedian: null,
+          marketSamples: 0,
+          detail: "Net değil. Piyasa araması üç kez sonuç vermedi.",
+        },
     });
     await dropPending(asin);
     return 1;

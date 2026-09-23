@@ -609,6 +609,32 @@ export function parseSearchPage(html: string): ProductCard[] {
   return found.length ? found : parseStorePage(html);
 }
 
+export function parseProductPage(html: string, pageUrl: string): ProductCard | null {
+  const $ = cheerio.load(html);
+  const fromUrl = pageUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+  const asin = (fromUrl?.[1] || $("[data-asin]").attr("data-asin") || "").toUpperCase();
+  if (!/^[A-Z0-9]{10}$/.test(asin)) return null;
+  const title = clean($("#productTitle").text() || $("h1#title").text() || $("h1").first().text() || $("title").first().text());
+  if (title.length < 3) return null;
+  const price = parsePrice($("span.a-price:not(.a-text-price) span.a-offscreen").first().text())
+    || parsePrice($("#corePrice_feature_div span.a-offscreen").first().text())
+    || parsePrice($("#price_inside_buybox").text())
+    || parsePrice($(".a-price .a-offscreen").first().text());
+  if (price == null) return null;
+  const list = parsePrice($("span.a-price.a-text-price span.a-offscreen").first().text());
+  const listPrice = list != null && list > price && !fakeListPrice(title, price, list) ? list : null;
+  const image = $("#landingImage").attr("src") || $("#imgBlkFront").attr("src") || $("img#landingImage").attr("data-old-hires") || null;
+  return {
+    asin,
+    title: title.slice(0, 300),
+    price,
+    listPrice,
+    image: image?.startsWith("https://") ? image : null,
+    condition: "",
+    url: `https://www.amazon.com.tr/dp/${asin}`,
+  };
+}
+
 export function assertAmazonParser(): void {
   const html = `
     <div data-component-type="s-search-result" data-asin="B0TEST1234">

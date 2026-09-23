@@ -16,6 +16,7 @@ import {
   nodeListingUrl,
   pageFlipUrl,
   pageSummary,
+  parseProductPage,
   parseSearchPage,
   scrollMoreUrl,
   seeAllResultsUrl,
@@ -30,6 +31,7 @@ import {
   insertAlert,
   listWatchQueries,
   needsFreshVerdict,
+  nextRecheck,
   readAisleCursors,
   readSetting,
   readState,
@@ -47,7 +49,7 @@ import { percentOff } from "@/lib/verdict";
 
 // GitHub tarafı sayfayı indirir, burası sadece okur ve sıradaki adresi söyler.
 export type Target = {
-  kind: "tur" | "reyon" | "takip";
+  kind: "tur" | "reyon" | "takip" | "urun";
   label: string;
   url: string;
 };
@@ -105,15 +107,22 @@ async function huntTarget(): Promise<Target> {
   };
 }
 
+async function recheckTarget(): Promise<Target> {
+  const item = await nextRecheck();
+  if (!item) return tourTarget();
+  return { kind: "urun", label: item.title.slice(0, 50) || item.asin, url: item.url };
+}
+
 export async function nextTarget(): Promise<Target> {
   const turn = (Number(await readSetting("feed_turn")) || 0) + 1;
   await writeSetting("feed_turn", String(turn % 1000));
   const slot = turn % 8;
-  if (slot === 0 || slot === 5) return fastStart("Yeni Gelenler");
-  if (slot === 1 || slot === 6) return fastStart("Günün Fırsatları");
-  if (slot === 2) return aisleByLabel("Çok Al Az Öde");
-  if (slot === 3) return aisleByLabel("Outlet");
-  if (slot === 4) return huntTarget();
+  if (slot === 0 || slot === 4) return recheckTarget();
+  if (slot === 1) return huntTarget();
+  if (slot === 2) return fastStart("Yeni Gelenler");
+  if (slot === 3) return aisleByLabel("Çok Al Az Öde");
+  if (slot === 5) return aisleByLabel("Outlet");
+  if (slot === 6) return fastStart("Günün Fırsatları");
   return tourTarget();
 }
 
@@ -182,7 +191,28 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
     const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.trustedHigh) : 0;
     if (Math.max(listOff, memoryOff) < minDiscount) continue;
     if (!(await needsFreshVerdict(item.asin, item.price))) continue;
-    await enqueuePending(item, memory);
+    if (memoryOff >= minDiscount && memory.trustedHigh) {
+      await insertAlert({
+        asin: item.asin,
+        title: item.title,
+        url: item.url,
+        image: item.image,
+        price: item.price,
+        listPrice: item.listPrice,
+        highestPrice: memory.trustedHigh,
+        notify: true,
+        verdict: {
+          verdict: "evet",
+          discount: Math.round(memoryOff * 10) / 10,
+          marketMedian: null,
+          marketSamples: 0,
+          detail: `Evet. Bu ürünü ${Math.round(memory.trustedHigh)} TL görmüştük, şimdi ${Math.round(item.price)} TL.`,
+        },
+      });
+      await addLog("bilgi", `EVET hafıza: ${item.title.slice(0, 70)} ${Math.round(memory.trustedHigh)}→${Math.round(item.price)}`);
+      continue;
+    }
+    await enqueuePending(item, memory, listOff >= minDiscount ? 0 : 1);
   }
   await pingHunts(items);
   return count;
@@ -286,20 +316,30 @@ async function eatAisle(url: string, html: string, items: ProductCard[], labelHi
   const config = await getConfig();
   const seen = await remember(items, config.minDiscount);
   await tagAisle(items.map((item) => item.asin), aisle.label);
-  if (fast) {
-    await addLog("bilgi", `Reyon · ${aisle.label} taze sayfa: ${seen} ürün. Biraz sonra yine bakılacak.`);
+  let pageNo = 1;
+  try {
+    pageNo = Number(new URL(url).searchParams.get("page") || String(page)) || page;
+  } catch {
+    pageNo = page;
+  }
+  const firstPage = pageNo <= 1;
+  if (firstPage && fast) {
+    const more = nextSearchPage(url) || scrollMoreUrl(html, url);
+    const saved = cursors[aisle.label];
+    if (more && (!saved?.url || (saved.page || 1) <= 1)) {
+      await writeAisleCursor(aisle.label, { page: 2, url: more });
+    }
+    await addLog("bilgi", `Reyon · ${aisle.label} sayfa 1: ${seen} ürün. Taze bakıldı, arka sayfalar sırayla taranacak.`);
+    return;
+  }
+  const more = pageNo >= AISLE_PAGE_CAP ? null : (scrollMoreUrl(html, url) || nextSearchPage(url));
+  if (!more) {
+    await addLog("bilgi", `Reyon · ${aisle.label} sayfa ${pageNo}: ${seen} ürün. Sonuna geldi, baştan bakacak.`);
     await writeAisleCursor(aisle.label, { page: 1, url: null });
     return;
   }
-  const more = page >= AISLE_PAGE_CAP ? null : (scrollMoreUrl(html, url) || nextSearchPage(url));
-  if (!more) {
-    await addLog("bilgi", `Reyon · ${aisle.label} sayfa ${page}: ${seen} ürün. Sonuna geldi, baştan bakacak.`);
-    await nextAisle();
-    return;
-  }
-  await addLog("bilgi", `Reyon · ${aisle.label} sayfa ${page}: ${seen} ürün. Aşağı iniliyor.`);
-  await writeAisleCursor(aisle.label, { page: page + 1, url: more });
-  await writeAisle((index + 1) % DEPO_AISLES.length, page + 1, null);
+  await addLog("bilgi", `Reyon · ${aisle.label} sayfa ${pageNo}: ${seen} ürün. Sayfa ${pageNo + 1}'e iniliyor.`);
+  await writeAisleCursor(aisle.label, { page: pageNo + 1, url: more });
 }
 
 export async function eatPage(input: { kind: string; url: string; html: string; label?: string }): Promise<{
@@ -319,7 +359,17 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
     await addLog("uyari", `Sayfa okunamadı. ${pageSummary(html)}`);
   } else {
     items = parseSearchPage(html);
-    if (input.kind === "takip") await eatHunt(input.label || "", html, items);
+    if (input.kind === "urun") {
+      const one = parseProductPage(html, url);
+      items = one ? [one] : [];
+      if (one) {
+        const config = await getConfig();
+        await remember([one], config.minDiscount);
+        await addLog("bilgi", `Tekrar bakıldı: ${one.title.slice(0, 70)} · ${Math.round(one.price)} TL`);
+      } else {
+        await addLog("uyari", `Ürün sayfası okunamadı. ${pageSummary(html)}`);
+      }
+    } else if (input.kind === "takip") await eatHunt(input.label || "", html, items);
     else if (input.kind === "reyon") await eatAisle(url, html, items, input.label);
     else await eatTour(url, html, items);
   }

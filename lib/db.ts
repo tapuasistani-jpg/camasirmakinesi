@@ -127,6 +127,7 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE watch ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION`;
   await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION`;
   await sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS dismissed INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE pending ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0`;
 }
 
 export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
@@ -409,20 +410,34 @@ export async function needsFreshVerdict(asin: string, price: number): Promise<bo
   return false;
 }
 
-export async function enqueuePending(item: ProductCard, memory: { highest: number; samples: number }): Promise<void> {
-  await db()`INSERT INTO pending (asin, title, url, image, price, list_price, highest_price, samples, tries)
-    VALUES (${item.asin}, ${item.title}, ${item.url}, ${item.image}, ${item.price}, ${item.listPrice}, ${memory.highest}, ${memory.samples}, 0)
+export async function enqueuePending(item: ProductCard, memory: { highest: number; samples: number }, priority = 0): Promise<void> {
+  await db()`INSERT INTO pending (asin, title, url, image, price, list_price, highest_price, samples, tries, priority)
+    VALUES (${item.asin}, ${item.title}, ${item.url}, ${item.image}, ${item.price}, ${item.listPrice}, ${memory.highest}, ${memory.samples}, 0, ${priority})
     ON CONFLICT (asin) DO UPDATE SET
       title = EXCLUDED.title,
       price = EXCLUDED.price,
       list_price = EXCLUDED.list_price,
       highest_price = GREATEST(pending.highest_price, EXCLUDED.highest_price),
-      samples = EXCLUDED.samples`;
+      samples = EXCLUDED.samples,
+      priority = GREATEST(pending.priority, EXCLUDED.priority)`;
 }
 
 export async function takePending(): Promise<Row | null> {
-  const rows = (await db()`SELECT * FROM pending ORDER BY created_at DESC LIMIT 1`) as Row[];
+  const rows = (await db()`SELECT * FROM pending ORDER BY priority DESC, created_at DESC LIMIT 1`) as Row[];
   return rows[0] ?? null;
+}
+
+export async function nextRecheck(): Promise<{ asin: string; title: string; url: string } | null> {
+  const rows = (await db()`SELECT asin, title, url FROM products
+    WHERE last_price > 0
+      AND last_seen < NOW() - INTERVAL '10 minutes'
+      AND last_seen > NOW() - INTERVAL '5 days'
+    ORDER BY last_seen ASC
+    LIMIT 1`) as Row[];
+  const row = rows[0];
+  if (!row) return null;
+  const asin = String(row.asin);
+  return { asin, title: String(row.title ?? ""), url: `https://www.amazon.com.tr/dp/${asin}` };
 }
 
 export async function bumpPending(asin: string): Promise<number> {
