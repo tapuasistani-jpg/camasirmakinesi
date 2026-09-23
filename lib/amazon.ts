@@ -45,7 +45,7 @@ export function nameSearchUrl(query: string, depo: boolean): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
-const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|ekran filmi|gizlilik|privacy|uyumlu|stand|kılıfı|\bcase\b|\bcover\b|charger|klavye|1 arada|aksesuar|\bfan\b|soğutucu|sogutucu/i;
+const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|ekran filmi|gizlilik|privacy|uyumlu|stand|kılıfı|\bcase\b|\bcover\b|charger|klavye|1 arada|aksesuar|\bfan\b|soğutucu|sogutucu|\bcontroller\b|\bgamepad\b|oyun kolu|joystick/i;
 
 function fold(text: string): string {
   return text
@@ -64,7 +64,6 @@ function tokenIn(hay: string, token: string): boolean {
   if (token === "ps5" && hay.includes("playstation 5")) return true;
   if (token === "ps4" && hay.includes("playstation 4")) return true;
   if (token === "rtx" && hay.includes("rtx")) return true;
-  if (token === "oled" && (hay.includes("oled") || hay.includes("qled"))) return true;
   const glued = token.match(/^([a-z]+)(\d{1,4})$/);
   if (glued && new RegExp(`${glued[1]}[\\s\\-]*${glued[2]}`).test(hay)) return true;
   return false;
@@ -78,7 +77,8 @@ export function titleFits(title: string, query: string): boolean {
   const needle = fold(query);
   const hay = fold(title);
   if (!needle || !hay) return false;
-  const tokens = needle.split(/[^\p{L}\p{N}]+/u).filter((token) => token.length >= 2);
+  const keepLetter = /series/.test(needle);
+  const tokens = needle.split(/[^\p{L}\p{N}]+/u).filter((token) => token.length >= 2 || (keepLetter && /^[xs]$/.test(token)));
   if (!tokens.length || tokens.some((token) => !tokenIn(hay, token))) return false;
   if (!isAccessory(query) && isAccessory(title)) return false;
   return true;
@@ -116,17 +116,7 @@ function huntJunk(title: string): boolean {
 
 export function huntPick(items: ProductCard[], query: string): ProductCard[] {
   const floor = huntFloor(query);
-  const tight = items.filter((item) => titleFits(item.title, query) && item.price >= floor && !huntJunk(item.title));
-  if (tight.length) return tight;
-  const keys = fold(query)
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => token.length >= 2 && (/\d/.test(token) || /iphone|airpods|xbox|nintendo|oled|rtx|watch|switch/.test(token)));
-  if (!keys.length) return [];
-  return items.filter((item) => {
-    if (item.price < floor || isAccessory(item.title) || huntJunk(item.title)) return false;
-    const hay = fold(item.title);
-    return keys.every((token) => tokenIn(hay, token));
-  });
+  return items.filter((item) => titleFits(item.title, query) && item.price >= floor && !huntJunk(item.title));
 }
 
 export const DEPO_HOME = "https://www.amazon.com.tr/b?node=44219324031";
@@ -978,4 +968,71 @@ export function assertAmazonParser(): void {
   }], "RTX 4090").length) {
     throw new Error("4090 posteri ekran kartı sandı");
   }
+  if (huntPick([{
+    asin: "B0QLED65XX",
+    title: "Samsung 65 inç QLED Q7F 4K Vision AI Smart TV (2025)",
+    price: 44999,
+    listPrice: null,
+    image: null,
+    condition: "",
+    url: "",
+  }], "LG OLED 65").length) {
+    throw new Error("QLED televizyon OLED sandı");
+  }
+  if (huntPick([{
+    asin: "B0KIDSWATCH",
+    title: "HUAWEI WATCH KIDS X1-Pembe Çocuk Saati",
+    price: 13999,
+    listPrice: null,
+    image: null,
+    condition: "",
+    url: "",
+  }], "Apple Watch Ultra").length) {
+    throw new Error("çocuk saati Watch Ultra sandı");
+  }
+  if (huntPick([{
+    asin: "B017EPHONE",
+    title: "Apple iPhone 16e (128 GB): Apple Intelligence için tasarlandı",
+    price: 51890,
+    listPrice: null,
+    image: null,
+    condition: "",
+    url: "",
+  }], "iPhone 17 Pro Max").length) {
+    throw new Error("17e telefonu Pro Max sandı");
+  }
+  if (huntPick([{
+    asin: "B0S25PLAIN",
+    title: "Samsung Galaxy S25, Yapay Zeka(AI) Telefon, 12GB RAM, 256GB Hafıza",
+    price: 46699,
+    listPrice: null,
+    image: null,
+    condition: "",
+    url: "",
+  }], "Samsung Galaxy S25 Ultra").length) {
+    throw new Error("S25'i Ultra sandı");
+  }
+  if (huntPick([{
+    asin: "B0GAMESIRX",
+    title: "GameSir G7 Pro Wired Controller for Xbox Series X|S, Xbox One",
+    price: 5089,
+    listPrice: null,
+    image: null,
+    condition: "",
+    url: "",
+  }], "Xbox Series X").length) {
+    throw new Error("oyun kolunu konsol sandı");
+  }
+  if (huntPick([{
+    asin: "B0LATTEGO1",
+    title: "Philips 5500 Serisi LatteGo Tam Otomatik Espresso Makinesi",
+    price: 22199,
+    listPrice: null,
+    image: null,
+    condition: "",
+    url: "",
+  }], "PS5 Slim").length) {
+    throw new Error("kahve makinesini PS5 sandı");
+  }
+  if (!titleFits("LG OLED65C4 65 inç 4K Smart TV", "LG OLED 65")) throw new Error("gerçek OLED kaçtı");
 }

@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 
-import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice, huntFloor, keepNewPrice } from "@/lib/amazon";
+import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice, huntFloor, keepNewPrice, priceBelongs, titleFits } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
 import { cameBackToOldPrice, dealThreshold, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
@@ -192,6 +192,9 @@ export async function abandonWatchSeed(asin: string): Promise<void> {
 }
 
 export async function applyWatchHunt(query: string, item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
+  if (!titleFits(item.title, query) || !priceBelongs(item.title, item.price)) {
+    return { hit: false, base: null, target: null };
+  }
   const sql = db();
   const rows = (await sql`SELECT highest_price, base_price, cheapest_price, high_samples FROM watch_query WHERE query = ${query}`) as Row[];
   if (!rows.length) return { hit: false, base: null, target: null };
@@ -698,6 +701,27 @@ async function dropFakeUnitDeals(): Promise<void> {
             NOW()
           )
       )`;
+  const bogus = (await sql`SELECT id, title, price FROM alerts WHERE verdict = 'evet' AND COALESCE(dismissed, 0) = 0`) as Row[];
+  for (const row of bogus) {
+    if (priceBelongs(String(row.title ?? ""), Number(row.price))) continue;
+    await sql`UPDATE alerts SET dismissed = 1 WHERE id = ${row.id}`;
+  }
+  const hunts = (await sql`SELECT query, title FROM watch_query WHERE COALESCE(title, '') <> ''`) as Row[];
+  for (const row of hunts) {
+    const query = String(row.query ?? "");
+    const title = String(row.title ?? "");
+    if (!query || !title || titleFits(title, query)) continue;
+    await sql`UPDATE watch_query SET
+      cheapest_asin = NULL,
+      cheapest_price = NULL,
+      title = '',
+      url = NULL,
+      image = NULL,
+      highest_price = NULL,
+      high_samples = 0,
+      base_price = NULL
+      WHERE query = ${query}`;
+  }
 }
 
 export async function getStatus(): Promise<Status> {
