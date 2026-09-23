@@ -82,7 +82,6 @@ export default function Dashboard() {
   const [customCategory, setCustomCategory] = useState("");
   const [screen, setScreen] = useState<"depo" | "reyon">("depo");
   const [watchInput, setWatchInput] = useState("");
-  const [watchTarget, setWatchTarget] = useState("");
   const [history, setHistory] = useState<{ asin: string; rows: { price: number; seenAt: string | null }[] } | null>(null);
   const [lookup, setLookup] = useState("");
   const [looking, setLooking] = useState(false);
@@ -203,7 +202,7 @@ export default function Dashboard() {
     const response = await fetch("/api/watch", {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({ item: watchInput, target: Number(watchTarget) || 0 }),
+      body: JSON.stringify({ item: watchInput }),
     });
     const data = await response.json();
     if (!response.ok) {
@@ -211,8 +210,7 @@ export default function Dashboard() {
       return;
     }
     setWatchInput("");
-    setWatchTarget("");
-    say(data.query ? `"${data.query}" takibe alındı. Bütün satıcılarda en ucuzu kovalayacak.` : "Takibe alındı. Fiyatı düşerse Telegram'a yazar.", true);
+    say(data.query ? `"${data.query}" takibe alındı. %${status?.minDiscount ?? 50} düşünce yazar.` : "Takibe alındı. Eşik kadar düşünce Telegram'a yazar.", true);
     await load();
   }
 
@@ -390,14 +388,11 @@ export default function Dashboard() {
         <section className="panel">
           <div className="panel-head">
             <h2>Takip listem</h2>
-            <p>Ürün adını yazman yeter. Bütün satıcılarda en ucuzu kovalır. İstersen link de yapıştır.</p>
+            <p>Ürün adını yaz. Fiyatı kaydeder, sitedeki eşik kadar (%{status?.minDiscount ?? 50}) düşünce Telegram'a yazar. Hedef yazmana gerek yok.</p>
           </div>
           <form onSubmit={watchAdd} className="watch-form">
             <label>Ürün adı veya link
               <input type="text" value={watchInput} placeholder="örnek: iPhone 17 Pro Max" onChange={(event) => setWatchInput(event.target.value)} />
-            </label>
-            <label>Hedef fiyat (isteğe bağlı)
-              <input type="number" min={0} value={watchTarget} placeholder="örnek: 95000" onChange={(event) => setWatchTarget(event.target.value)} />
             </label>
             <button type="submit">Takibe al</button>
           </form>
@@ -408,8 +403,7 @@ export default function Dashboard() {
                 <div className="title">{item.title || item.query || item.asin}</div>
                 {item.query ? <span className="detail">tüm satıcılar · {item.query}</span> : null}
                 <span className="price">{tl(item.price)}</span>
-                {item.targetPrice ? <span className="detail">hedef {tl(item.targetPrice)}</span> : null}
-                {item.basePrice ? <span className="old">en iyi {tl(item.basePrice)}</span> : null}
+                {item.basePrice ? <span className="old">görülen en düşük {tl(item.basePrice)}</span> : null}
                 <div className="row-buttons">
                   {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">Amazon'da aç</a> : null}
                   {item.asin ? <button className="ghost" type="button" onClick={() => showHistory(item.asin)}>Fiyat geçmişi</button> : null}

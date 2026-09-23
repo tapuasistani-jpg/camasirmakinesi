@@ -3,7 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
-import { realSaleHigh, type Verdict } from "@/lib/verdict";
+import { realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
 
 type Sql = ReturnType<typeof neon>;
 type Row = Record<string, unknown>;
@@ -124,6 +124,8 @@ async function migrate(): Promise<void> {
     image TEXT,
     added_at TIMESTAMPTZ DEFAULT NOW()
   )`;
+  await sql`ALTER TABLE watch ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION`;
+  await sql`ALTER TABLE watch_query ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION`;
 }
 
 export async function addWatch(asin: string, targetPrice: number | null): Promise<void> {
@@ -169,22 +171,21 @@ export async function listWatchQueries(): Promise<{ query: string; target: numbe
 
 export async function applyWatchHunt(query: string, item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
   const sql = db();
-  const rows = (await sql`SELECT target_price, base_price, cheapest_price FROM watch_query WHERE query = ${query}`) as Row[];
+  const rows = (await sql`SELECT highest_price, base_price, cheapest_price FROM watch_query WHERE query = ${query}`) as Row[];
   if (!rows.length) return { hit: false, base: null, target: null };
-  const target = num(rows[0].target_price);
-  const base = num(rows[0].base_price);
-  const previous = num(rows[0].cheapest_price);
-  const floor = base ?? previous;
-  const hit = (target != null && item.price <= target) || (floor != null && item.price <= floor * 0.95);
+  const prevHigh = num(rows[0].highest_price) ?? num(rows[0].cheapest_price);
+  const config = await getConfig();
+  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= config.minDiscount;
   await sql`UPDATE watch_query SET
     cheapest_asin = ${item.asin},
     cheapest_price = ${item.price},
     title = ${item.title},
     url = ${item.url},
     image = COALESCE(${item.image}, image),
-    base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price})
+    base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price}),
+    highest_price = GREATEST(COALESCE(highest_price, ${item.price}), ${item.price})
     WHERE query = ${query}`;
-  return { hit, base: floor, target };
+  return { hit, base: prevHigh, target: null };
 }
 
 export async function watchedAsins(): Promise<Set<string>> {
@@ -195,18 +196,19 @@ export async function watchedAsins(): Promise<Set<string>> {
 // Takip edilen ürün düştü mü: hedefin altına indi ya da gördüğümüz en iyi fiyatı geçti.
 export async function watchDrop(item: ProductCard): Promise<{ hit: boolean; base: number | null; target: number | null }> {
   const sql = db();
-  const rows = (await sql`SELECT target_price, base_price FROM watch WHERE asin = ${item.asin}`) as Row[];
+  const rows = (await sql`SELECT highest_price, base_price FROM watch WHERE asin = ${item.asin}`) as Row[];
   if (!rows.length) return { hit: false, base: null, target: null };
-  const target = num(rows[0].target_price);
-  const base = num(rows[0].base_price);
-  const hit = (target != null && item.price <= target) || (base != null && item.price <= base * 0.95);
+  const prevHigh = num(rows[0].highest_price) ?? num(rows[0].base_price);
+  const config = await getConfig();
+  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= config.minDiscount;
   await sql`UPDATE watch SET
     title = COALESCE(NULLIF(${item.title}, ''), title),
     url = ${item.url},
     image = COALESCE(${item.image}, image),
-    base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price})
+    base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price}),
+    highest_price = GREATEST(COALESCE(highest_price, ${item.price}), ${item.price})
     WHERE asin = ${item.asin}`;
-  return { hit, base, target };
+  return { hit, base: prevHigh, target: null };
 }
 
 export async function priceHistory(asin: string): Promise<{ price: number; seenAt: string | null }[]> {

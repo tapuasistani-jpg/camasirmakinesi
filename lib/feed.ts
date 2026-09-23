@@ -136,7 +136,7 @@ async function pingHunts(items: ProductCard[]): Promise<void> {
         discount: Math.round(percentOff(cheapest.price, reference ?? cheapest.price) * 10) / 10,
         marketMedian: null,
         marketSamples: 0,
-        detail: `Takip: "${hunt.query}" için Amazon'daki en ucuz satıcı ${Math.round(cheapest.price)} TL.`,
+        detail: `Takip: "${hunt.query}" gördüğümüz fiyattan eşiğin üstünde düştü. Şimdi ${Math.round(cheapest.price)} TL.`,
       },
     });
     await addLog("bilgi", `Takip "${hunt.query}" düştü: ${Math.round(cheapest.price)} TL.`);
@@ -167,7 +167,7 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
             discount: Math.round(percentOff(item.price, reference ?? memory.highest) * 10) / 10,
             marketMedian: null,
             marketSamples: 0,
-            detail: `Takip listendeki ürün düştü. Şimdi ${Math.round(item.price)} TL.`,
+            detail: `Takip listendeki ürün eşiğin üstünde düştü. Şimdi ${Math.round(item.price)} TL.`,
           },
         });
         await addLog("bilgi", `Takip: ${item.title.slice(0, 70)} düştü.`);
