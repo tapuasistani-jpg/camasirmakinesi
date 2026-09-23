@@ -66,11 +66,33 @@ jobs:
               --data @gonder.json "$base/api/cron/feed")
             echo "$cevap" | head -c 400
             echo
+            extras=$(echo "$target" | jq -c '.extra // []')
             yeni=$(echo "$cevap" | jq -c '.next // empty')
             if [ -n "$yeni" ]; then
               target="$yeni"
             else
               target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next")
+            fi
+            if [ "$extras" != "[]" ] && [ "$extras" != "null" ]; then
+              echo "$extras" | jq -c '.[]' | while read -r extra; do
+                eurl=$(echo "$extra" | jq -r '.url // empty')
+                ekind=$(echo "$extra" | jq -r '.kind // "takip"')
+                elabel=$(echo "$extra" | jq -r '.label // ""')
+                [ -z "$eurl" ] && continue
+                echo "ek · $ekind · $elabel · $eurl"
+                ecode=$(curl -sS -m 45 -b jar.txt -c jar.txt -A "$agent" \
+                  -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+                  -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
+                  -H "Referer: https://www.amazon.com.tr/" \
+                  -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
+                [ "$ecode" != "200" ] && continue
+                jq -n --arg url "$eurl" --arg kind "$ekind" --arg label "$elabel" --rawfile html sayfa.html \
+                  '{url:$url,kind:$kind,label:$label,html:$html,quiet:true}' > gonder.json
+                curl -sS -m 55 -X POST -H "$auth" -H 'Content-Type: application/json' \
+                  --data @gonder.json "$base/api/cron/feed" | head -c 200
+                echo
+                sleep 3
+              done
             fi
             if [ "$kind" = "tur" ]; then
               sleep 7

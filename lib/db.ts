@@ -3,7 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
-import { realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
+import { dealThreshold, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
 
 type Sql = ReturnType<typeof neon>;
 type Row = Record<string, unknown>;
@@ -177,7 +177,7 @@ export async function applyWatchHunt(query: string, item: ProductCard): Promise<
   if (!rows.length) return { hit: false, base: null, target: null };
   const prevHigh = num(rows[0].highest_price) ?? num(rows[0].cheapest_price);
   const config = await getConfig();
-  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= config.minDiscount;
+  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= dealThreshold(prevHigh, config.minDiscount);
   await sql`UPDATE watch_query SET
     cheapest_asin = ${item.asin},
     cheapest_price = ${item.price},
@@ -202,7 +202,7 @@ export async function watchDrop(item: ProductCard): Promise<{ hit: boolean; base
   if (!rows.length) return { hit: false, base: null, target: null };
   const prevHigh = num(rows[0].highest_price) ?? num(rows[0].base_price);
   const config = await getConfig();
-  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= config.minDiscount;
+  const hit = prevHigh != null && percentOff(item.price, prevHigh) >= dealThreshold(prevHigh, config.minDiscount);
   await sql`UPDATE watch SET
     title = COALESCE(NULLIF(${item.title}, ''), title),
     url = ${item.url},
@@ -428,12 +428,20 @@ export async function takePending(): Promise<Row | null> {
 }
 
 export async function nextRecheck(): Promise<{ asin: string; title: string; url: string } | null> {
-  const rows = (await db()`SELECT asin, title, url FROM products
-    WHERE last_price > 0
-      AND last_seen < NOW() - INTERVAL '10 minutes'
-      AND last_seen > NOW() - INTERVAL '5 days'
-    ORDER BY last_seen ASC
-    LIMIT 1`) as Row[];
+  const rows = (await db()`
+    SELECT p.asin, p.title, p.url, p.last_price
+    FROM products p
+    LEFT JOIN watch w ON w.asin = p.asin
+    LEFT JOIN watch_query q ON q.cheapest_asin = p.asin
+    WHERE p.last_price > 0
+      AND p.last_seen < NOW() - INTERVAL '10 minutes'
+      AND p.last_seen > NOW() - INTERVAL '5 days'
+    ORDER BY
+      CASE WHEN w.asin IS NOT NULL OR q.query IS NOT NULL THEN 0 ELSE 1 END,
+      CASE WHEN p.last_price >= 10000 THEN 0 ELSE 1 END,
+      p.last_seen ASC
+    LIMIT 1
+  `) as Row[];
   const row = rows[0];
   if (!row) return null;
   const asin = String(row.asin);

@@ -10,6 +10,11 @@ export function tl(value: number): string {
   return Math.round(value).toLocaleString("tr-TR");
 }
 
+export function dealThreshold(reference: number, siteMin: number): number {
+  if (reference >= 10_000) return Math.min(20, siteMin);
+  return siteMin;
+}
+
 export function percentOff(price: number | null, reference: number | null): number {
   if (!price || !reference || reference <= 0 || price >= reference) return 0;
   return ((reference - price) / reference) * 100;
@@ -200,4 +205,8 @@ export function assertVerdicts(): void {
   if (echoed.length !== 2 || echoed[0] !== 7000) throw new Error("piyasa filtresi bozuldu");
   const cheaper = decide({ price: 2000, listPrice: 9000, highestPrice: 2000, samples: 1, marketPrices: [4400, 4500, 4600], threshold: 50 });
   if (cheaper?.verdict !== "evet") throw new Error("piyasadan yarı yarıya ucuz ürün kaçtı");
+  if (dealThreshold(180000, 50) !== 20) throw new Error("pahalı ürün eşiği 20 olmalı");
+  if (dealThreshold(168, 50) !== 50) throw new Error("ucuz ürün eşiği bozuldu");
+  const phone = decide({ price: 120000, listPrice: 180000, highestPrice: 180000, samples: 3, marketPrices: [], threshold: dealThreshold(180000, 50), history: [180000, 175000, 120000] });
+  if (phone?.verdict !== "evet") throw new Error("iPhone yüzde 33 kaçtı");
 }

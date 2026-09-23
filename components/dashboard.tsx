@@ -81,7 +81,7 @@ export default function Dashboard() {
   const [category, setCategory] = useState("Elektronik");
   const [customCategory, setCustomCategory] = useState("");
   const [screen, setScreen] = useState<"depo" | "reyon">("depo");
-  const [watchInput, setWatchInput] = useState("");
+  const [kararHepsi, setKararHepsi] = useState(false);
   const [history, setHistory] = useState<{ asin: string; rows: { price: number; seenAt: string | null }[] } | null>(null);
   const [lookup, setLookup] = useState("");
   const [looking, setLooking] = useState(false);
@@ -373,9 +373,17 @@ export default function Dashboard() {
         <section className="panel">
           <div className="panel-head">
             <h2>Kararlar</h2>
-            <p>%{status?.minDiscount ?? 50} eşiğini geçen ürünler. EVET = piyasadan da ucuz.</p>
+            <p>10 bin TL üstünde %{20}, altında %{status?.minDiscount ?? 50}. Varsayılan yalnız EVET.</p>
+            <button className="ghost" type="button" onClick={() => setKararHepsi(!kararHepsi)}>
+              {kararHepsi ? "Yalnız EVET göster" : "HAYIR ve NET DEĞİL de göster"}
+            </button>
           </div>
-          {status?.alerts.length ? status.alerts.map((deal) => (
+          {(() => {
+            const rows = (status?.alerts ?? []).filter((deal) => kararHepsi || deal.verdict === "evet");
+            if (!rows.length) {
+              return <p className="empty">{kararHepsi ? `Henüz eşik geçen ürün yok. Sırada ${status?.pendingCount ?? 0} ürün var.` : "Henüz EVET yok. Diğer kararlar için üstteki düğmeye bas."}</p>;
+            }
+            return rows.map((deal) => (
             <article className="deal" key={deal.id}>
               <Photo src={deal.image} />
               <div>
@@ -395,7 +403,8 @@ export default function Dashboard() {
                 {history?.asin === deal.asin ? <History rows={history.rows} /> : null}
               </div>
             </article>
-          )) : <p className="empty">Henüz %{status?.minDiscount ?? 50} eşiğini geçen ürün yok. Sırada bekleyen {status?.pendingCount ?? 0} ürün var.</p>}
+            ));
+          })()}
         </section>
 
         <aside>
@@ -465,7 +474,7 @@ export default function Dashboard() {
       <section className="panel log-panel">
         <div className="panel-head">
           <h2>Takip listem</h2>
-          <p>Ürün adını yaz. Fiyatı kaydeder, sitedeki eşik kadar (%{status?.minDiscount ?? 50}) düşünce Telegram'a yazar. Hedef yazmana gerek yok.</p>
+          <p>Ürün adını yaz. 10 bin üstü %20, altı %{status?.minDiscount ?? 50} düşünce yazar. Turda üç isim birden aranır.</p>
         </div>
         <form onSubmit={watchAdd} className="watch-form">
           <label>Ürün adı veya link

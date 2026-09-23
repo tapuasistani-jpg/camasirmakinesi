@@ -616,10 +616,25 @@ export function parseProductPage(html: string, pageUrl: string): ProductCard | n
   if (!/^[A-Z0-9]{10}$/.test(asin)) return null;
   const title = clean($("#productTitle").text() || $("h1#title").text() || $("h1").first().text() || $("title").first().text());
   if (title.length < 3) return null;
-  const price = parsePrice($("span.a-price:not(.a-text-price) span.a-offscreen").first().text())
+  const buybox = parsePrice($("span.a-price:not(.a-text-price) span.a-offscreen").first().text())
     || parsePrice($("#corePrice_feature_div span.a-offscreen").first().text())
     || parsePrice($("#price_inside_buybox").text())
     || parsePrice($(".a-price .a-offscreen").first().text());
+  const others: number[] = [];
+  $("#olp_feature_div, #aod-offer-list, #aod-container, #mbc, .olp-link, #aod-ingress-message").each((_, node) => {
+    const text = clean($(node).text());
+    for (const match of text.matchAll(/(\d{1,3}(?:\.\d{3})+|\d+),\d{2}\s*TL/g)) {
+      const value = parsePrice(match[0]);
+      if (value != null) others.push(value);
+    }
+  });
+  $("#aod-offer .a-offscreen, #aod-price-1 .a-offscreen, #mbc .a-offscreen, span.olp-from").each((_, node) => {
+    const value = parsePrice($(node).text());
+    if (value != null) others.push(value);
+  });
+  const floor = buybox ?? 0;
+  const cheaper = others.filter((value) => value > 0 && (floor <= 0 || (value <= floor && value >= floor * 0.3)));
+  const price = cheaper.length ? Math.min(floor || cheaper[0], ...cheaper) : buybox;
   if (price == null) return null;
   const list = parsePrice($("span.a-price.a-text-price span.a-offscreen").first().text());
   const listPrice = list != null && list > price && !fakeListPrice(title, price, list) ? list : null;
@@ -783,6 +798,12 @@ export function assertAmazonParser(): void {
   if (seeAllResultsUrl(`<a href="/gp/help">Yardım</a>`) !== null) throw new Error("başka link sonuç sandı");
   if (!hasNextPage(`<a class="s-pagination-next" href="/s?page=2">Daha fazla sonuç</a>`)) throw new Error("sonraki sayfa kaçtı");
   if (hasNextPage(`<span class="s-pagination-next s-pagination-disabled">Sonraki</span>`)) throw new Error("bitmiş sayfa devam sandı");
+  const otherSellers = parseProductPage(`
+    <span id="productTitle">iPhone 17 Pro Max</span>
+    <span class="a-price"><span class="a-offscreen">120.000,00 TL</span></span>
+    <div id="olp_feature_div">4 yeni: 89.999,00 TL'den</div>
+  `, "https://www.amazon.com.tr/dp/B0IPHONE17");
+  if (!otherSellers || otherSellers.price !== 89999) throw new Error("diğer satıcı fiyatı kaçtı");
   if (!titleFits("Apple iPhone 17 Pro Max 256 GB", "iPhone 17 Pro Max")) throw new Error("telefon ismi eşleşmedi");
   if (!titleFits("APPLE IPHONE 17 PRO MAX", "iPhone 17 Pro Max")) throw new Error("büyük harf iPhone kaçtı");
   if (!titleFits("Sony PlayStation 5 Pro Konsol", "PS5 Pro")) throw new Error("PS5 adı eşleşmedi");

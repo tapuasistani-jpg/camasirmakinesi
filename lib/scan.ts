@@ -24,7 +24,7 @@ import {
 } from "@/lib/db";
 import { searchPrices } from "@/lib/market";
 import { formatAlert, sendMessage } from "@/lib/telegram";
-import { decide, percentOff } from "@/lib/verdict";
+import { dealThreshold, decide, percentOff } from "@/lib/verdict";
 
 const BROWSER_HEADERS = {
   "User-Agent": USER_AGENT,
@@ -100,7 +100,7 @@ export async function judgeOne(): Promise<number> {
   const config = await getConfig();
   if (tries >= 3) {
     const memoryOff = percentOff(price, highest);
-    const memoryHit = samples >= 2 && memoryOff >= config.minDiscount;
+    const memoryHit = samples >= 2 && memoryOff >= dealThreshold(highest || price, config.minDiscount);
     await insertAlert({
       asin,
       title: String(pending.title ?? ""),
@@ -146,7 +146,7 @@ export async function judgeOne(): Promise<number> {
     highestPrice: highest,
     samples,
     marketPrices,
-    threshold: config.minDiscount,
+    threshold: dealThreshold(highest || price, config.minDiscount),
     title: String(pending.title ?? ""),
     history: highest != null ? [highest, price] : [price],
   });
@@ -252,7 +252,7 @@ export async function scanOnce(onlyRaw?: string) {
       count += 1;
       const listOff = percentOff(item.price, item.listPrice);
       const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.trustedHigh) : 0;
-      if (Math.max(listOff, memoryOff) < config.minDiscount) continue;
+      if (Math.max(listOff, memoryOff) < dealThreshold(memory.trustedHigh || item.price, config.minDiscount)) continue;
       if (!(await needsFreshVerdict(item.asin, item.price))) continue;
       await enqueuePending(item, memory);
     }

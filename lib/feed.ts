@@ -45,13 +45,14 @@ import {
   writeState,
 } from "@/lib/db";
 import { judgeOne, sendOne } from "@/lib/scan";
-import { percentOff } from "@/lib/verdict";
+import { dealThreshold, percentOff } from "@/lib/verdict";
 
 // GitHub tarafı sayfayı indirir, burası sadece okur ve sıradaki adresi söyler.
 export type Target = {
   kind: "tur" | "reyon" | "takip" | "urun";
   label: string;
   url: string;
+  extra?: Target[];
 };
 
 const TOUR_PAGE_CAP = 200;
@@ -97,14 +98,24 @@ async function huntTarget(): Promise<Target> {
   const hunts = await listWatchQueries();
   if (!hunts.length) return tourTarget();
   const cursor = Number(await readSetting("watch_turn")) || 0;
-  const hunt = hunts[cursor % hunts.length];
-  await writeSetting("watch_turn", String((cursor + 1) % 1000));
+  const seen = new Set<string>();
+  const batch: { query: string }[] = [];
+  for (let step = 0; step < hunts.length && batch.length < 3; step += 1) {
+    const hunt = hunts[(cursor + step) % hunts.length];
+    if (seen.has(hunt.query)) continue;
+    seen.add(hunt.query);
+    batch.push(hunt);
+  }
+  await writeSetting("watch_turn", String((cursor + batch.length) % 1000));
   const depo = cursor % 2 === 1;
-  return {
+  const toTarget = (hunt: { query: string }): Target => ({
     kind: "takip",
     label: hunt.query,
     url: nameSearchUrl(hunt.query, depo),
-  };
+  });
+  const main = toTarget(batch[0]);
+  main.extra = batch.slice(1).map(toTarget);
+  return main;
 }
 
 async function recheckTarget(): Promise<Target> {
@@ -189,9 +200,10 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
     }
     const listOff = percentOff(item.price, item.listPrice);
     const memoryOff = memory.samples >= 2 ? percentOff(item.price, memory.trustedHigh) : 0;
-    if (Math.max(listOff, memoryOff) < minDiscount) continue;
+    const gate = dealThreshold(memory.trustedHigh || item.listPrice || item.price, minDiscount);
+    if (Math.max(listOff, memoryOff) < gate) continue;
     if (!(await needsFreshVerdict(item.asin, item.price))) continue;
-    if (memoryOff >= minDiscount && memory.trustedHigh) {
+    if (memoryOff >= gate && memory.trustedHigh) {
       await insertAlert({
         asin: item.asin,
         title: item.title,
@@ -342,7 +354,7 @@ async function eatAisle(url: string, html: string, items: ProductCard[], labelHi
   await writeAisleCursor(aisle.label, { page: pageNo + 1, url: more });
 }
 
-export async function eatPage(input: { kind: string; url: string; html: string; label?: string }): Promise<{
+export async function eatPage(input: { kind: string; url: string; html: string; label?: string; quiet?: boolean }): Promise<{
   ok: boolean;
   blocked: boolean;
   items: number;
@@ -377,5 +389,5 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
   const sent = await sendOne();
   const extraJudged = await judgeOne();
   const extraSent = await sendOne();
-  return { ok: !blocked, blocked, items: items.length, judged: judged + extraJudged, sent: sent + extraSent, next: await nextTarget() };
+  return { ok: !blocked, blocked, items: items.length, judged: judged + extraJudged, sent: sent + extraSent, next: input.quiet ? { kind: "tur", label: "", url: "" } : await nextTarget() };
 }
