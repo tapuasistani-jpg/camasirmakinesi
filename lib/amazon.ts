@@ -45,7 +45,7 @@ export function nameSearchUrl(query: string, depo: boolean): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
-const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|ekran filmi|gizlilik|privacy|uyumlu|stand|kılıfı|\bcase\b|\bcover\b|charger|klavye|1 arada|aksesuar/i;
+const ACCESSORY = /kılıf|kilif|kablo|şarj aleti|sarj aleti|kapak|cam koruyucu|temperli|ekran koruyucu|ekran filmi|gizlilik|privacy|uyumlu|stand|kılıfı|\bcase\b|\bcover\b|charger|klavye|1 arada|aksesuar|\bfan\b|soğutucu|sogutucu/i;
 
 function fold(text: string): string {
   return text
@@ -64,6 +64,9 @@ function tokenIn(hay: string, token: string): boolean {
   if (token === "ps5" && hay.includes("playstation 5")) return true;
   if (token === "ps4" && hay.includes("playstation 4")) return true;
   if (token === "rtx" && (hay.includes("geforce") || hay.includes("rtx"))) return true;
+  if (token === "oled" && (hay.includes("oled") || hay.includes("qled"))) return true;
+  const glued = token.match(/^([a-z]+)(\d{1,4})$/);
+  if (glued && new RegExp(`${glued[1]}[\\s\\-]*${glued[2]}`).test(hay)) return true;
   return false;
 }
 
@@ -94,7 +97,17 @@ export function huntFloor(query: string): number {
 
 export function huntPick(items: ProductCard[], query: string): ProductCard[] {
   const floor = huntFloor(query);
-  return items.filter((item) => titleFits(item.title, query) && item.price >= floor);
+  const tight = items.filter((item) => titleFits(item.title, query) && item.price >= floor);
+  if (tight.length) return tight;
+  const keys = fold(query)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length >= 2 && (/\d/.test(token) || /iphone|airpods|xbox|nintendo|oled|rtx|watch|switch/.test(token)));
+  if (!keys.length) return [];
+  return items.filter((item) => {
+    if (item.price < floor || isAccessory(item.title)) return false;
+    const hay = fold(item.title);
+    return keys.every((token) => tokenIn(hay, token));
+  });
 }
 
 export const DEPO_HOME = "https://www.amazon.com.tr/b?node=44219324031";
@@ -291,9 +304,10 @@ export function isBlocked(html: string): boolean {
 }
 
 export function pageSummary(html: string): string {
-  const title = (html.match(/<title>([^<]{0,80})/i)?.[1] || "başlıksız").replace(/\s+/g, " ").trim();
+  const title = (html.match(/<title[^>]*>([^<]{0,80})/i)?.[1] || "başlıksız").replace(/\s+/g, " ").trim();
   const cards = html.match(/data-asin="[A-Z0-9]{10}"/gi)?.length ?? 0;
-  return `${title} · ${cards} kart · ${html.length} bayt`;
+  const marks = ["productTitle", "ld+json", "og:title", "priceAmount", "corePrice", "a-price"].filter((mark) => html.includes(mark));
+  return `${title} · ${cards} kart · ${html.length} bayt${marks.length ? ` · ${marks.join(",")}` : ""}`;
 }
 
 export function continueTarget(html: string): { url: string | null; captcha: boolean } {
@@ -583,6 +597,8 @@ export function parseSearchPage(html: string): ProductCard[] {
       || card.find("h2 span").first().text()
       || card.find("h2 a").first().text()
       || card.find("h2").first().text()
+      || card.find("[data-cy='title-recipe']").first().text()
+      || card.find(".s-title-instructions-style").first().text()
       || card.find("a.a-link-normal span").first().text()
       || card.find("img.s-image").first().attr("alt")
       || card.find("img").first().attr("alt")
@@ -653,17 +669,49 @@ export function huntAsinsFromHtml(html: string, query: string): { asin: string; 
   return found;
 }
 
+function jsonField(html: string, key: string): string {
+  const match = html.match(new RegExp(`"${key}"\\s*:\\s*"([^"]{3,240})"`, "i"));
+  return match?.[1] || "";
+}
+
+function jsonPrice(html: string): number | null {
+  const amount = html.match(/"priceAmount"\s*:\s*"?(\d+(?:\.\d+)?)/i);
+  if (amount) {
+    const value = Number(amount[1]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  const display = html.match(/"displayPrice"\s*:\s*"([^"]+)"/i);
+  if (display) {
+    const value = parsePrice(display[1]);
+    if (value != null) return value;
+  }
+  const price = html.match(/"price"\s*:\s*"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?|\d+)"/i);
+  return price ? parsePrice(price[1]) : null;
+}
+
 export function parseProductPage(html: string, pageUrl: string): ProductCard | null {
   const $ = cheerio.load(html);
   const fromUrl = pageUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
   const asin = (fromUrl?.[1] || $("[data-asin]").attr("data-asin") || "").toUpperCase();
   if (!/^[A-Z0-9]{10}$/.test(asin)) return null;
-  const title = clean($("#productTitle").text() || $("h1#title").text() || $("h1").first().text() || $("title").first().text());
+  const rawTitle = clean(
+    $("#productTitle").text()
+    || $("h1#title").text()
+    || $("h1").first().text()
+    || $("meta[property='og:title']").attr("content")
+    || jsonField(html, "name")
+    || jsonField(html, "title")
+    || $("title").first().text(),
+  );
+  const title = rawTitle.replace(/^amazon\.com\.tr\s*[:|\-]\s*/i, "").trim();
   if (title.length < 3) return null;
   const buybox = parsePrice($("span.a-price:not(.a-text-price) span.a-offscreen").first().text())
     || parsePrice($("#corePrice_feature_div span.a-offscreen").first().text())
+    || parsePrice($("#corePriceDisplay_desktop_feature_div span.a-offscreen").first().text())
     || parsePrice($("#price_inside_buybox").text())
-    || parsePrice($(".a-price .a-offscreen").first().text());
+    || parsePrice($(".a-price .a-offscreen").first().text())
+    || parsePrice($("meta[itemprop='price']").attr("content"))
+    || jsonPrice(html);
   const others: number[] = [];
   $("#olp_feature_div, #aod-offer-list, #aod-container, #mbc, .olp-link, #aod-ingress-message").each((_, node) => {
     const text = clean($(node).text());
@@ -682,7 +730,7 @@ export function parseProductPage(html: string, pageUrl: string): ProductCard | n
   if (price == null) return null;
   const list = parsePrice($("span.a-price.a-text-price span.a-offscreen").first().text());
   const listPrice = list != null && list > price && !fakeListPrice(title, price, list) ? list : null;
-  const image = $("#landingImage").attr("src") || $("#imgBlkFront").attr("src") || $("img#landingImage").attr("data-old-hires") || null;
+  const image = $("#landingImage").attr("src") || $("#imgBlkFront").attr("src") || $("img#landingImage").attr("data-old-hires") || $("meta[property='og:image']").attr("content") || null;
   return {
     asin,
     title: title.slice(0, 300),
@@ -853,10 +901,16 @@ export function assertAmazonParser(): void {
   if (!titleFits("Sony PlayStation 5 Pro Konsol", "PS5 Pro")) throw new Error("PS5 adı eşleşmedi");
   if (titleFits("iPhone 17 Pro Max Silikon Kılıf", "iPhone 17 Pro Max")) throw new Error("kılıf telefon sandı");
   if (titleFits("Apple iPhone 16 Pro Max", "iPhone 17 Pro Max")) throw new Error("başka nesil telefon sandı");
+  if (!titleFits("Samsung Galaxy Z Flip 6 256 GB", "Samsung Galaxy Z Flip6")) throw new Error("Flip6 boşluklu başlığı kaçırdı");
   if (titleFits("CONSTREIN Apple ile uyumlu Watch Ultra Privacy", "Apple Watch Ultra")) {
     throw new Error("watch filmi saati sandı");
   }
   if (huntFloor("iPhone 17 Pro Max") < 10000) throw new Error("telefon tabanı düşük");
+  const jsonProduct = parseProductPage(
+    `<html><head><meta property="og:title" content="Apple iPhone 17 Pro Max 256 GB"><script type="application/ld+json">{"name":"Apple iPhone 17 Pro Max 256 GB","priceAmount":89999}</script></head><body></body></html>`,
+    "https://www.amazon.com.tr/dp/B0JSONIPH1",
+  );
+  if (!jsonProduct || jsonProduct.price !== 89999) throw new Error("ürün sayfası json fiyatı kaçtı");
   if (huntPick([{ asin: "B0FAKEWATCH", title: "Watch Ultra Privacy", price: 301, listPrice: null, image: null, condition: "", url: "" }], "Apple Watch Ultra").length) {
     throw new Error("ucuz film takip fiyatı oldu");
   }

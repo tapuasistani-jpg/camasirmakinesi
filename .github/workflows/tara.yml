@@ -49,7 +49,7 @@ jobs:
               continue
             fi
             echo "$kind · $label · $url"
-            code=$(curl -sS -m 45 -b jar.txt -c jar.txt -A "$agent" \
+            code=$(curl -sS --compressed -m 45 -b jar.txt -c jar.txt -A "$agent" \
               -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
               -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
               -H "Upgrade-Insecure-Requests: 1" \
@@ -80,7 +80,7 @@ jobs:
                 elabel=$(echo "$extra" | jq -r '.label // ""')
                 [ -z "$eurl" ] && continue
                 echo "ek · $ekind · $elabel · $eurl"
-                ecode=$(curl -sS -m 45 -b jar.txt -c jar.txt -A "$agent" \
+                ecode=$(curl -sS --compressed -m 45 -b jar.txt -c jar.txt -A "$agent" \
                   -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
                   -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
                   -H "Referer: https://www.amazon.com.tr/" \

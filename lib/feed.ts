@@ -10,6 +10,7 @@ import {
   isBlocked,
   keywordAisleUrl,
   huntAsinsFromHtml,
+  huntFloor,
   huntPick,
   nameSearchUrl,
   nextSearchPage,
@@ -99,16 +100,18 @@ async function aisleTarget(): Promise<Target> {
 async function huntTarget(): Promise<Target> {
   const hunts = await listWatchQueries();
   if (!hunts.length) return tourTarget();
+  const missing = hunts.filter((hunt) => hunt.price == null || hunt.price < huntFloor(hunt.query));
+  const pool = missing.length ? missing : hunts;
   const cursor = Number(await readSetting("watch_turn")) || 0;
   const seen = new Set<string>();
   const batch: { query: string }[] = [];
-  for (let step = 0; step < hunts.length && batch.length < 5; step += 1) {
-    const hunt = hunts[(cursor + step) % hunts.length];
+  for (let step = 0; step < pool.length && batch.length < 6; step += 1) {
+    const hunt = pool[(cursor + step) % pool.length];
     if (seen.has(hunt.query)) continue;
     seen.add(hunt.query);
     batch.push(hunt);
   }
-  await writeSetting("watch_turn", String((cursor + batch.length) % Math.max(hunts.length, 1)));
+  await writeSetting("watch_turn", String((cursor + batch.length) % Math.max(pool.length, 1)));
   const pack: Target[] = [];
   for (const hunt of batch) {
     pack.push({ kind: "takip", label: hunt.query, url: nameSearchUrl(hunt.query, false) });
@@ -130,7 +133,7 @@ export async function nextTarget(): Promise<Target> {
   await writeSetting("feed_turn", String(turn % 1000));
   const slot = turn % 8;
   if (slot === 0 || slot === 4) return recheckTarget();
-  if (slot === 1) return huntTarget();
+  if (slot === 1 || slot === 7) return huntTarget();
   if (slot === 2) return fastStart("Yeni Gelenler");
   if (slot === 3) return aisleByLabel("Çok Al Az Öde");
   if (slot === 5) return aisleByLabel("Outlet");

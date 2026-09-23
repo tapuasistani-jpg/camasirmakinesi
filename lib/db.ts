@@ -164,12 +164,13 @@ export async function removeWatchQuery(query: string): Promise<void> {
   await db()`DELETE FROM watch_query WHERE query = ${query}`;
 }
 
-export async function listWatchQueries(): Promise<{ query: string; target: number | null; base: number | null }[]> {
-  const rows = (await db()`SELECT query, target_price, base_price FROM watch_query ORDER BY added_at ASC`) as Row[];
+export async function listWatchQueries(): Promise<{ query: string; target: number | null; base: number | null; price: number | null }[]> {
+  const rows = (await db()`SELECT query, target_price, base_price, cheapest_price FROM watch_query ORDER BY added_at ASC`) as Row[];
   return rows.map((row) => ({
     query: String(row.query),
     target: num(row.target_price),
     base: num(row.base_price),
+    price: num(row.cheapest_price),
   }));
 }
 
