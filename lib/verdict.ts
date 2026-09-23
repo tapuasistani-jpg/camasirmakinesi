@@ -72,7 +72,22 @@ export function realSaleHigh(prices: number[]): number | null {
   const restHigh = Math.max(...rest);
   const peakCount = clean.filter((price) => price >= max * 0.92).length;
   if (max >= restHigh * 1.7 && peakCount <= 2) return restHigh;
+  if (max >= restHigh * 1.25 && peakCount <= 1) return restHigh;
   return max;
+}
+
+// 6399 → 10500 → 6399. Eski fiyata dönüş indirim değil.
+export function cameBackToOldPrice(prices: number[]): boolean {
+  if (prices.length < 3) return false;
+  const current = prices[prices.length - 1];
+  if (!current) return false;
+  let end = prices.length - 1;
+  while (end > 0 && Math.abs(prices[end - 1] - current) / current <= 0.08) end -= 1;
+  if (end < 2) return false;
+  const earlier = prices.slice(0, end);
+  const left = earlier.some((price) => Math.abs(price - current) / current > 0.08);
+  const hadBefore = earlier.some((price) => Math.abs(price - current) / current <= 0.08);
+  return left && hadBefore;
 }
 
 // Google'da dönen 550 TL, Amazon'un eski şişirme etiketi. Piyasa sayma.
@@ -96,11 +111,13 @@ export function decide(input: {
   history?: number[];
 }): Verdict | null {
   const listOff = percentOff(input.price, input.listPrice);
-  const trustedHigh = realSaleHigh([
+  const series = [
     ...(input.highestPrice != null ? [input.highestPrice] : []),
     ...(input.history ?? []),
     input.price,
-  ]);
+  ];
+  const timeline = input.history?.length ? [...input.history, input.price] : series;
+  const trustedHigh = cameBackToOldPrice(timeline) ? null : realSaleHigh(series);
   const memoryOff = input.samples >= 2 ? percentOff(input.price, trustedHigh) : 0;
   const discount = Math.max(listOff, memoryOff);
   if (discount < input.threshold) return null;
@@ -209,4 +226,15 @@ export function assertVerdicts(): void {
   if (dealThreshold(168, 50) !== 50) throw new Error("ucuz ürün eşiği bozuldu");
   const phone = decide({ price: 120000, listPrice: 180000, highestPrice: 180000, samples: 3, marketPrices: [], threshold: dealThreshold(180000, 50), history: [180000, 175000, 120000] });
   if (phone?.verdict !== "evet") throw new Error("iPhone yüzde 33 kaçtı");
+  if (!cameBackToOldPrice([6399, 7875, 10500, 6399])) throw new Error("eski fiyata dönüş kaçtı");
+  const hike = decide({
+    price: 6399,
+    listPrice: 10500,
+    highestPrice: 10500,
+    samples: 4,
+    marketPrices: [],
+    threshold: 20,
+    history: [6399, 7875, 10500, 6399],
+  });
+  if (hike?.verdict === "evet") throw new Error("attırıp eski fiyata inen ayakkabı fırsat sayıldı");
 }

@@ -3,7 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice, huntFloor } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
-import { dealThreshold, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
+import { cameBackToOldPrice, dealThreshold, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
 
 type Sql = ReturnType<typeof neon>;
 type Row = Record<string, unknown>;
@@ -428,8 +428,9 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
     await sql`INSERT INTO price_points (asin, price, list_price) VALUES (${item.asin}, ${item.price}, ${listPrice})`;
   }
   const count = (await sql`SELECT COUNT(*)::int AS n FROM price_points WHERE asin = ${item.asin}`) as Row[];
-  const points = (await sql`SELECT price FROM price_points WHERE asin = ${item.asin}`) as Row[];
-  const trustedHigh = realSaleHigh(points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0));
+  const points = (await sql`SELECT price FROM price_points WHERE asin = ${item.asin} ORDER BY seen_at ASC, id ASC`) as Row[];
+  const history = points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0);
+  const trustedHigh = cameBackToOldPrice(history) ? null : realSaleHigh(history);
   return { highest, samples: num(count[0]?.n) ?? 1, inserted, trustedHigh };
 }
 
@@ -647,6 +648,20 @@ async function dropFakeUnitDeals(): Promise<void> {
   await sql`DELETE FROM alerts WHERE verdict = 'evet' AND market_median IS NOT NULL AND price > market_median * 0.55 AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
   await sql`DELETE FROM alerts WHERE verdict = 'evet' AND detail LIKE 'Takip%' AND (market_median IS NULL OR market_samples = 0 OR price > COALESCE(market_median, 0) * 0.85)`;
   await sql`DELETE FROM alerts WHERE verdict = 'evet' AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
+  await sql`DELETE FROM alerts a
+    WHERE a.verdict = 'evet'
+      AND a.detail LIKE 'Evet. Bu ürünü%'
+      AND EXISTS (
+        SELECT 1 FROM price_points p
+        WHERE p.asin = a.asin
+          AND a.price > 0
+          AND ABS(p.price - a.price) / a.price <= 0.08
+          AND p.seen_at < COALESCE(
+            (SELECT MIN(p2.seen_at) FROM price_points p2
+              WHERE p2.asin = a.asin AND p2.price >= COALESCE(a.highest_price, 0) * 0.92),
+            NOW()
+          )
+      )`;
 }
 
 export async function getStatus(): Promise<Status> {
