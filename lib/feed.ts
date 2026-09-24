@@ -176,7 +176,7 @@ async function pingHunts(items: ProductCard[]): Promise<void> {
     const cheapest = matches.reduce((best, item) => (item.price < best.price ? item : best));
     const drop = await applyWatchHunt(hunt.query, cheapest);
     if (!drop.hit || !drop.base) continue;
-    await openBak(cheapest, drop.base);
+    if (!(await openBak(cheapest, drop.base))) continue;
     await enqueuePending(cheapest, { highest: drop.base, samples: 3 }, 2);
     await addLog("bilgi", `BAK takip "${hunt.query}" ${Math.round(cheapest.price)} TL, piyasa bakılacak.`);
   }
@@ -191,8 +191,9 @@ async function remember(items: ProductCard[], minDiscount: number): Promise<numb
     if (watched.has(item.asin)) {
       const drop = await watchDrop(item);
       if (drop.hit && drop.base) {
-        await openBak(item, drop.base);
-        await enqueuePending(item, { highest: drop.base, samples: 3 }, 2);
+        if (await openBak(item, drop.base)) {
+          await enqueuePending(item, { highest: drop.base, samples: 3 }, 2);
+        }
       }
     }
     const listOff = percentOff(item.price, item.listPrice);

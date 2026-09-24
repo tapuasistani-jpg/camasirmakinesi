@@ -599,6 +599,13 @@ export async function markNotified(id: number, telegramId?: number | null): Prom
 }
 
 export async function openBak(item: ProductCard, highest: number | null): Promise<boolean> {
+  const recent = (await db()`SELECT id FROM alerts
+    WHERE asin = ${item.asin}
+      AND price > 0
+      AND ABS(price - ${item.price}) / GREATEST(price, ${item.price}, 1) <= 0.08
+      AND created_at > NOW() - INTERVAL '12 hours'
+    LIMIT 1`) as Row[];
+  if (recent.length) return false;
   const open = (await db()`SELECT id FROM alerts
     WHERE asin = ${item.asin} AND verdict = 'bak' AND COALESCE(dismissed, 0) = 0 LIMIT 1`) as Row[];
   if (open.length) return false;
