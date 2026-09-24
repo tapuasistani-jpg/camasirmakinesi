@@ -211,13 +211,13 @@ export function decide(input: {
       detail: `Net değil. Fiyat eski seviyesine dönmüş olabilir, piyasa da çıkmadı.`,
     };
   }
-  if (deepMemoryDeal(memoryOff, input.samples, input.threshold) || (discount >= input.threshold && input.samples >= 2)) {
+  if (memoryOff >= input.threshold && input.samples >= 2 && trustedHigh) {
     return {
       verdict: "evet",
-      discount: Math.round(discount * 10) / 10,
+      discount: Math.round(memoryOff * 10) / 10,
       marketMedian: null,
       marketSamples: 0,
-      detail: `Evet. Piyasa bulunamadı, Depo ${tl(input.price)} TL görünüyor. Sen bak.`,
+      detail: `Evet. Biz ${tl(trustedHigh)} TL görmüştük, şimdi ${tl(input.price)} TL. Piyasa bulunamadı, sen bak.`,
     };
   }
   return {

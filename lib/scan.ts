@@ -120,7 +120,7 @@ export async function judgeOne(): Promise<number> {
   const maxTries = deep ? 3 : 2;
   if (tries >= maxTries) {
     const listOff = percentOff(price, listPrice);
-    const wave = deep || (Math.max(memoryOff, listOff) >= gate && samples >= 2);
+    const wave = memoryOff >= gate && samples >= 2;
     await retractBak(asin, wave ? "birak" : "iptal");
     await insertAlert({
       asin,
