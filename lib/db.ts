@@ -831,7 +831,7 @@ export async function getStatus(): Promise<Status> {
   const nowKind = await readSetting("now_kind");
   const nowLabel = await readSetting("now_label");
   const nowPage = Number(await readSetting("now_page")) || 0;
-  const kindName = nowKind === "tur" ? "Tur" : nowKind === "reyon" ? "Reyon" : nowKind === "takip" ? "Takip" : nowKind === "urun" ? "Ürün" : "";
+  const kindName = nowKind === "tur" ? "Tur" : nowKind === "reyon" ? "Reyon" : nowKind === "takip" ? "Takip" : nowKind === "urun" ? "Ürün" : nowKind === "site" ? "Amazon TR" : "";
   const search = nowLabel
     ? `${kindName || "Tarama"} · ${nowLabel}`
     : `Amazon Depo · ${depoQueryLabel(query)}`;

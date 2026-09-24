@@ -10,7 +10,8 @@ export async function GET(request: Request) {
   if (!scanOk(request)) return Response.json({ error: "yetkisiz" }, { status: 401 });
   try {
     await ensureSchema();
-    return Response.json(await nextTarget());
+    const lane = new URL(request.url).searchParams.get("lane") === "site" ? "site" : "depo";
+    return Response.json(await nextTarget(lane));
   } catch (error) {
     const message = error instanceof Error ? error.message : "sıradaki adres bulunamadı";
     return Response.json({ error: message }, { status: 500 });

@@ -15,6 +15,7 @@ import {
   huntPick,
   nameSearchUrl,
   nextSearchPage,
+  siteSearchUrl,
   nodeFromUrl,
   nodeListingUrl,
   pageFlipUrl,
@@ -55,11 +56,13 @@ import { dealThreshold, deepMemoryDeal, percentOff } from "@/lib/verdict";
 
 // GitHub tarafı sayfayı indirir, burası sadece okur ve sıradaki adresi söyler.
 export type Target = {
-  kind: "tur" | "reyon" | "takip" | "urun";
+  kind: "tur" | "reyon" | "takip" | "urun" | "site";
   label: string;
   url: string;
   extra?: Target[];
 };
+
+export type ScanLane = "depo" | "site";
 
 const TOUR_PAGE_CAP = 200;
 const TOUR_STINT = 6;
@@ -153,7 +156,55 @@ async function recheckTarget(): Promise<Target> {
   return main;
 }
 
-export async function nextTarget(): Promise<Target> {
+async function readSiteCursor(): Promise<{ page: number; queryIndex: number; nextUrl: string | null }> {
+  return {
+    page: Number(await readSetting("site_page")) || 1,
+    queryIndex: Number(await readSetting("site_query_index")) || 0,
+    nextUrl: (await readSetting("site_next_url")) || null,
+  };
+}
+
+async function writeSiteCursor(page: number, queryIndex: number, nextUrl: string | null): Promise<void> {
+  await writeSetting("site_page", String(page));
+  await writeSetting("site_query_index", String(queryIndex));
+  await writeSetting("site_next_url", nextUrl || "");
+}
+
+async function siteTourTarget(): Promise<Target> {
+  const cursor = await readSiteCursor();
+  const query = DEPO_QUERIES[cursor.queryIndex % DEPO_QUERIES.length] || DEPO_QUERIES[0];
+  let page = cursor.page;
+  if (page <= 1 && !cursor.nextUrl) {
+    const resume = Number(await readSetting(`site_resume_${query}`)) || 0;
+    if (resume > 1) {
+      page = resume;
+      await writeSetting("site_resumed", "1");
+      await writeSetting("site_stint", "0");
+      await writeSiteCursor(page, cursor.queryIndex, null);
+    }
+  }
+  const url = cursor.nextUrl || siteSearchUrl(query, page);
+  return { kind: "site", label: query, url };
+}
+
+async function siteHuntTarget(): Promise<Target> {
+  const hunts = await listWatchQueries();
+  if (!hunts.length) return siteTourTarget();
+  const cursor = Number(await readSetting("site_watch_turn")) || 0;
+  const hunt = hunts[cursor % hunts.length];
+  await writeSetting("site_watch_turn", String((cursor + 1) % hunts.length));
+  return { kind: "takip", label: hunt.query, url: nameSearchUrl(hunt.query, false) };
+}
+
+async function nextSiteTarget(): Promise<Target> {
+  const turn = (Number(await readSetting("site_feed_turn")) || 0) + 1;
+  await writeSetting("site_feed_turn", String(turn % 1000));
+  if (turn % 4 === 0) return siteHuntTarget();
+  return siteTourTarget();
+}
+
+export async function nextTarget(lane: ScanLane = "depo"): Promise<Target> {
+  if (lane === "site") return nextSiteTarget();
   const turn = (Number(await readSetting("feed_turn")) || 0) + 1;
   await writeSetting("feed_turn", String(turn % 1000));
   const slot = turn % 8;
@@ -285,6 +336,49 @@ async function eatTour(url: string, html: string, items: ProductCard[]): Promise
   await writeState(page + 1, state.queryIndex, null, flip && more === elektronikPageUrl(page + 1) ? null : more, state.queryText);
 }
 
+async function eatSite(url: string, html: string, items: ProductCard[]): Promise<void> {
+  const cursor = await readSiteCursor();
+  const query = DEPO_QUERIES[cursor.queryIndex % DEPO_QUERIES.length] || DEPO_QUERIES[0];
+  const page = cursor.page;
+  const mark = fingerprint(items);
+  const sameAsBefore = mark.length > 0 && mark === (await readSetting("site_mark"));
+
+  async function nextCategory(why: string, resumePage = 1): Promise<void> {
+    await addLog("bilgi", `Amazon TR "${query}" ${why} Sonraki kategori.`);
+    await writeSetting("site_mark", "");
+    await writeSetting("site_stint", "0");
+    await writeSetting("site_resumed", "");
+    await writeSetting(`site_resume_${query}`, String(resumePage > 1 ? resumePage : 1));
+    await writeSiteCursor(1, (cursor.queryIndex + 1) % DEPO_QUERIES.length, null);
+  }
+
+  if (!items.length) {
+    await nextCategory(`sayfa ${page}: ürün yok. ${pageSummary(html)}`);
+    return;
+  }
+  if (sameAsBefore) {
+    await nextCategory(`sayfa ${page}: aynı ürünler geldi, kategori bitti.`);
+    return;
+  }
+  const config = await getConfig();
+  const seen = await remember(items, config.minDiscount);
+  await writeSetting("site_mark", mark);
+  const more = continueResultsUrl(html, url) || nextSearchPage(url);
+  if (!more || page >= TOUR_PAGE_CAP) {
+    await nextCategory(`sayfa ${page}: ${seen} ürün. Kategori bitti.`, 1);
+    return;
+  }
+  const stint = (Number(await readSetting("site_stint")) || 0) + 1;
+  await writeSetting("site_stint", String(stint));
+  const resumed = (await readSetting("site_resumed")) === "1";
+  if (stint >= TOUR_STINT || (!resumed && page >= TOUR_STINT)) {
+    await nextCategory(`sayfa ${page}: ${seen} ürün. Altı sayfa bakıldı, sıradaki kategoriye geçiliyor.`, page + 1);
+    return;
+  }
+  await addLog("bilgi", `Amazon TR "${query}" sayfa ${page}: ${seen} ürün. Sayfa ${page + 1}'e geçiliyor.`);
+  await writeSiteCursor(page + 1, cursor.queryIndex, more);
+}
+
 async function eatAisle(url: string, html: string, items: ProductCard[], labelHint?: string): Promise<void> {
   const state = await readState();
   const hinted = DEPO_AISLES.find((row) => row.label === labelHint);
@@ -348,7 +442,7 @@ async function eatAisle(url: string, html: string, items: ProductCard[], labelHi
   await writeAisleCursor(aisle.label, { page: pageNo + 1, url: more });
 }
 
-export async function eatPage(input: { kind: string; url: string; html: string; label?: string; quiet?: boolean }): Promise<{
+export async function eatPage(input: { kind: string; url: string; html: string; label?: string; quiet?: boolean; lane?: ScanLane }): Promise<{
   ok: boolean;
   blocked: boolean;
   items: number;
@@ -358,13 +452,17 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
 }> {
   const html = input.html || "";
   const url = input.url || "";
+  const lane: ScanLane = input.lane || (input.kind === "site" ? "site" : "depo");
   await touchLastScan();
-  const kindName = input.kind === "tur" ? "Tur" : input.kind === "reyon" ? "Reyon" : input.kind === "takip" ? "Takip" : input.kind === "urun" ? "Ürün" : "Tarama";
+  const kindName = input.kind === "tur" ? "Tur" : input.kind === "reyon" ? "Reyon" : input.kind === "takip" ? "Takip" : input.kind === "urun" ? "Ürün" : input.kind === "site" ? "Amazon TR" : "Tarama";
   await writeSetting("now_kind", input.kind || "tur");
   await writeSetting("now_label", input.label || kindName);
   if (input.kind === "tur" || input.kind === "reyon") {
     const state = await readState();
     await writeSetting("now_page", String(input.kind === "tur" ? state.page : state.aislePage));
+  } else if (input.kind === "site") {
+    const cursor = await readSiteCursor();
+    await writeSetting("now_page", String(cursor.page));
   } else {
     await writeSetting("now_page", "");
   }
@@ -390,10 +488,11 @@ export async function eatPage(input: { kind: string; url: string; html: string; 
       }
     } else if (input.kind === "takip") await eatHunt(input.label || "", html, items);
     else if (input.kind === "reyon") await eatAisle(url, html, items, input.label);
+    else if (input.kind === "site") await eatSite(url, html, items);
     else await eatTour(url, html, items);
   }
   const rushed = (await sendOne()) + (await sendOne());
   const judged = (await judgeOne()) + (await judgeOne()) + (await judgeOne());
   const sent = rushed + (await sendOne()) + (await sendOne());
-  return { ok: !blocked, blocked, items: items.length, judged, sent, next: input.quiet ? { kind: "tur", label: "", url: "" } : await nextTarget() };
+  return { ok: !blocked, blocked, items: items.length, judged, sent, next: input.quiet ? { kind: "tur", label: "", url: "" } : await nextTarget(lane) };
 }

@@ -36,6 +36,14 @@ export function depoSearchUrl(query: string, page: number): string {
   return `https://www.amazon.com.tr/s?${params.toString()}`;
 }
 
+export function siteSearchUrl(query: string, page: number): string {
+  const params = new URLSearchParams({
+    k: query,
+    page: String(page),
+  });
+  return `https://www.amazon.com.tr/s?${params.toString()}`;
+}
+
 export function nameSearchUrl(query: string, depo: boolean): string {
   const params = new URLSearchParams({ k: query.trim(), page: "1" });
   if (depo) {
@@ -837,6 +845,10 @@ export function assertAmazonParser(): void {
   }
   const bumped = nextSearchPage("https://www.amazon.com.tr/s?k=Elektronik&i=warehouse-deals&page=1");
   if (!bumped?.includes("page=2")) throw new Error("sayfa artırılamadı");
+  const magaza = siteSearchUrl("Elektronik", 3);
+  if (!magaza.includes("k=Elektronik") || !magaza.includes("page=3") || magaza.includes("warehouse-deals")) {
+    throw new Error("Amazon TR mağaza adresi Depo'ya kaydı");
+  }
   const plain = `
     <div data-asin="B0TEST9012"><img alt="Bebek Bezi"><span>249,90 TL</span></div>
   `;

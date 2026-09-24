@@ -8,8 +8,11 @@ export const maxDuration = 60;
 
 export async function POST(request: Request) {
   if (!scanOk(request)) return Response.json({ error: "yetkisiz" }, { status: 401 });
-  const body = (await request.json().catch(() => ({}))) as { kind?: unknown; url?: unknown; html?: unknown; label?: unknown; quiet?: unknown };
-  const kind = body.kind === "reyon" || body.kind === "takip" || body.kind === "urun" ? body.kind : "tur";
+  const body = (await request.json().catch(() => ({}))) as { kind?: unknown; url?: unknown; html?: unknown; label?: unknown; quiet?: unknown; lane?: unknown };
+  const lane = body.lane === "site" ? "site" : "depo";
+  const kind = body.kind === "reyon" || body.kind === "takip" || body.kind === "urun" || body.kind === "site"
+    ? body.kind
+    : lane === "site" ? "site" : "tur";
   const url = typeof body.url === "string" ? body.url : "";
   const html = typeof body.html === "string" ? body.html : "";
   const label = typeof body.label === "string" ? body.label : "";
@@ -19,7 +22,7 @@ export async function POST(request: Request) {
   }
   try {
     await ensureSchema();
-    return Response.json(await eatPage({ kind, url, html, label, quiet }));
+    return Response.json(await eatPage({ kind, url, html, label, quiet, lane }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "sayfa okunamadı";
     return Response.json({ ok: false, blocked: false, error: message }, { status: 500 });
