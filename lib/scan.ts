@@ -2,13 +2,13 @@ import { DEPO_AISLES, DEPO_QUERIES, USER_AGENT, aisleEntryUrl, aisleStartUrls, c
 import type { ProductCard } from "@/lib/amazon";
 import {
   addLog,
-  bumpPending,
   closeBak,
   dropPending,
   enqueuePending,
   getConfig,
   insertAlert,
   markNotified,
+  releaseNotify,
   needsFreshVerdict,
   nextUnsent,
   readAisleCursors,
@@ -108,7 +108,7 @@ export async function judgeOne(): Promise<number> {
   const pending = await takePending();
   if (!pending) return 0;
   const asin = String(pending.asin);
-  const tries = await bumpPending(asin);
+  const tries = Number(pending.tries ?? 1);
   const price = Number(pending.price);
   const listPrice = pending.list_price == null ? null : Number(pending.list_price);
   const seen = await observedHigh(asin);
@@ -201,6 +201,7 @@ export async function sendOne(): Promise<number> {
   const alert = await nextUnsent();
   if (!alert) return 0;
   if (!config.token || !config.chatId) {
+    await releaseNotify(Number(alert.id));
     await addLog("uyari", "Fırsat var ama Telegram ayarı boş.");
     return 0;
   }
@@ -219,6 +220,7 @@ export async function sendOne(): Promise<number> {
     }));
     await markNotified(Number(alert.id), telegramId);
   } catch (error) {
+    await releaseNotify(Number(alert.id));
     const message = error instanceof Error ? error.message : "Telegram gitmedi";
     await addLog("hata", `Telegram gitmedi: ${message}`);
     return 0;

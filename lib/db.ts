@@ -476,7 +476,14 @@ export async function enqueuePending(item: ProductCard, memory: { highest: numbe
 }
 
 export async function takePending(): Promise<Row | null> {
-  const rows = (await db()`SELECT * FROM pending ORDER BY priority DESC, created_at DESC LIMIT 1`) as Row[];
+  const rows = (await db()`UPDATE pending SET tries = tries + 1
+    WHERE asin = (
+      SELECT asin FROM pending
+      ORDER BY priority DESC, created_at DESC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *`) as Row[];
   return rows[0] ?? null;
 }
 
@@ -564,7 +571,37 @@ export async function insertAlert(input: {
   notify: boolean;
 }): Promise<void> {
   const verdict = input.verdict;
-  await db()`INSERT INTO alerts (
+  const sql = db();
+  if (verdict.verdict === "evet" || verdict.verdict === "bak") {
+    const existing = (await sql`SELECT id, verdict, notified FROM alerts
+      WHERE asin = ${input.asin}
+        AND verdict IN ('bak', 'evet')
+        AND COALESCE(dismissed, 0) = 0
+        AND created_at > NOW() - INTERVAL '12 hours'
+        AND price > 0
+        AND ABS(price - ${input.price}) / GREATEST(price, ${input.price}, 1) <= 0.08
+      ORDER BY id ASC`) as Row[];
+    if (existing.length) {
+      const first = existing[0];
+      if (verdict.verdict === "evet" && String(first.verdict) === "bak") {
+        const already = Number(first.notified) === 1;
+        await sql`UPDATE alerts SET
+          verdict = 'evet',
+          detail = ${verdict.detail},
+          discount = ${verdict.discount},
+          market_median = ${verdict.marketMedian},
+          market_samples = ${verdict.marketSamples},
+          highest_price = COALESCE(${input.highestPrice}, highest_price),
+          wants_notify = ${already ? 0 : input.notify ? 1 : 0}
+          WHERE id = ${first.id}`;
+      }
+      for (const row of existing.slice(1)) {
+        await sql`UPDATE alerts SET dismissed = 1 WHERE id = ${row.id}`;
+      }
+      return;
+    }
+  }
+  await sql`INSERT INTO alerts (
     asin, title, url, image, price, list_price, highest_price, discount,
     market_median, market_samples, verdict, detail, wants_notify, notified
   ) VALUES (
@@ -582,16 +619,37 @@ export async function hideAlert(id: number): Promise<void> {
 }
 
 export async function nextUnsent(): Promise<Row | null> {
-  const rows = (await db()`SELECT * FROM alerts WHERE wants_notify = 1 AND notified = 0 ORDER BY id ASC LIMIT 1`) as Row[];
+  const rows = (await db()`
+    UPDATE alerts SET notified = 1
+    WHERE id = (
+      SELECT a.id FROM alerts a
+      WHERE a.wants_notify = 1 AND a.notified = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM alerts b
+          WHERE b.id <> a.id
+            AND b.asin = a.asin
+            AND b.notified = 1
+            AND b.wants_notify = 1
+            AND b.created_at > NOW() - INTERVAL '12 hours'
+            AND ABS(b.price - a.price) / GREATEST(b.price, a.price, 1) <= 0.08
+        )
+      ORDER BY a.id ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *
+  `) as Row[];
   return rows[0] ?? null;
 }
 
 export async function markNotified(id: number, telegramId?: number | null): Promise<void> {
   if (telegramId != null) {
-    await db()`UPDATE alerts SET notified = 1, telegram_id = ${String(telegramId)} WHERE id = ${id}`;
-    return;
+    await db()`UPDATE alerts SET telegram_id = ${String(telegramId)} WHERE id = ${id}`;
   }
-  await db()`UPDATE alerts SET notified = 1 WHERE id = ${id}`;
+}
+
+export async function releaseNotify(id: number): Promise<void> {
+  await db()`UPDATE alerts SET notified = 0 WHERE id = ${id} AND telegram_id IS NULL`;
 }
 
 export async function openBak(item: ProductCard, highest: number | null): Promise<boolean> {
@@ -756,6 +814,18 @@ async function healPhantomHighs(): Promise<void> {
       await sql`UPDATE alerts SET highest_price = ${was} WHERE id = ${row.id}`;
     }
   }
+  await sql`UPDATE alerts a SET dismissed = 1
+    WHERE COALESCE(a.dismissed, 0) = 0
+      AND a.verdict IN ('evet', 'bak')
+      AND EXISTS (
+        SELECT 1 FROM alerts b
+        WHERE b.asin = a.asin
+          AND b.id < a.id
+          AND COALESCE(b.dismissed, 0) = 0
+          AND b.verdict IN ('evet', 'bak')
+          AND ABS(b.price - a.price) / GREATEST(b.price, a.price, 1) <= 0.08
+          AND b.created_at > NOW() - INTERVAL '12 hours'
+      )`;
 }
 
 async function dropFakeUnitDeals(): Promise<void> {
