@@ -119,7 +119,9 @@ export async function judgeOne(): Promise<number> {
   const deep = deepMemoryDeal(memoryOff, samples, config.minDiscount);
   const maxTries = deep ? 3 : 2;
   if (tries >= maxTries) {
-    await retractBak(asin, "iptal");
+    const listOff = percentOff(price, listPrice);
+    const wave = deep || (Math.max(memoryOff, listOff) >= gate && samples >= 2);
+    await retractBak(asin, wave ? "birak" : "iptal");
     await insertAlert({
       asin,
       title,
@@ -128,16 +130,22 @@ export async function judgeOne(): Promise<number> {
       price,
       listPrice,
       highestPrice: highest,
-      notify: false,
-      verdict: {
-        verdict: "kararsiz",
-        discount: Math.round(percentOff(price, listPrice) * 10) / 10,
-        marketMedian: null,
-        marketSamples: 0,
-        detail: deep
-          ? "Net değil. Hafıza düşüşü var ama piyasa araması cevap vermedi, Telegram EVET gitmedi."
-          : "Net değil. Piyasa araması sonuç vermedi, hafıza tek başına yetmedi.",
-      },
+      notify: wave,
+      verdict: wave
+        ? {
+          verdict: "evet",
+          discount: Math.round(Math.max(memoryOff, listOff) * 10) / 10,
+          marketMedian: null,
+          marketSamples: 0,
+          detail: `Evet. Piyasa bulunamadı, Depo ${Math.round(price)} TL görünüyor. Sen bak.`,
+        }
+        : {
+          verdict: "kararsiz",
+          discount: Math.round(listOff * 10) / 10,
+          marketMedian: null,
+          marketSamples: 0,
+          detail: "Net değil. Piyasa araması sonuç vermedi, hafıza tek başına yetmedi.",
+        },
     });
     await dropPending(asin);
     return 1;

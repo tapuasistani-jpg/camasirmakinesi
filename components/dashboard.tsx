@@ -585,9 +585,9 @@ export default function Dashboard() {
           </div>
 
           <h3 className="reyon-head">Reyondan çıkan fırsatlar</h3>
-          {status?.aisleAlerts.length ? status.aisleAlerts.map((deal) => (
+          {status?.aisleAlerts.filter((deal) => deal.verdict === "evet" || deal.verdict === "bak").length ? status.aisleAlerts.filter((deal) => deal.verdict === "evet" || deal.verdict === "bak").map((deal) => (
             <DealCard key={`reyon-${deal.id}`} deal={deal} onHide={hideDeal} />
-          )) : <p className="empty">Reyonlarda %{status?.minDiscount ?? 80} eşiğini geçen ürün çıkmadı. Çıkarsa buraya düşer ve Telegram'a gider.</p>}
+          )) : <p className="empty">Reyonda BAK veya EVET yok. Alttaki yeşil yüzde Amazon’un çizili fiyatı, Telegram’a gitmez.</p>}
 
           <h3 className="reyon-head">Reyonda görülenler</h3>
           {status?.aisleItems.length ? (
@@ -599,7 +599,7 @@ export default function Dashboard() {
                     <div className="title">{item.title}</div>
                     <span className="price">{tl(item.price)}</span>
                     {item.listPrice ? <span className="old">{tl(item.listPrice)}</span> : null}
-                    {item.discount > 0 ? <span className="badge evet">%{item.discount}</span> : null}
+                    {item.discount > 0 ? <span className="old">etiket %{item.discount}</span> : null}
                     <a href={item.url} target="_blank" rel="noopener noreferrer">{item.aisle}</a>
                   </div>
                 </article>

@@ -737,7 +737,7 @@ async function dropFakeUnitDeals(): Promise<void> {
   // Piyasadan eşiğin altında kalan sahte EVET'leri sil. Telegram'a gidenler kalsın.
   await sql`DELETE FROM alerts WHERE verdict = 'evet' AND COALESCE(notified, 0) = 0 AND market_median IS NOT NULL AND price > market_median * 0.55 AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
   await sql`DELETE FROM alerts WHERE verdict = 'evet' AND COALESCE(notified, 0) = 0 AND detail LIKE 'Takip%' AND (market_median IS NULL OR market_samples = 0 OR price > COALESCE(market_median, 0) * 0.85)`;
-  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND COALESCE(notified, 0) = 0 AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet. Bu ürünü%'`;
+  await sql`DELETE FROM alerts WHERE verdict = 'evet' AND COALESCE(notified, 0) = 0 AND (market_median IS NULL OR market_samples = 0) AND detail NOT LIKE 'Takip%' AND detail NOT LIKE 'Evet.%' AND detail NOT LIKE 'Piyasa bulunamadı%'`;
   await sql`DELETE FROM alerts a
     WHERE a.verdict = 'evet'
       AND COALESCE(a.notified, 0) = 0

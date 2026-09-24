@@ -202,6 +202,24 @@ export function decide(input: {
       detail: `Hayır. Çizili fiyata göre %${Math.round(listOff)} indirim var ama piyasa ortası ${tl(median)} TL. Amazon fiyatı buna yakın, etiket şişirilmiş olabilir.`,
     };
   }
+  if (cameBackToOldPrice(timeline)) {
+    return {
+      verdict: "kararsiz",
+      discount: Math.round(discount * 10) / 10,
+      marketMedian: null,
+      marketSamples: 0,
+      detail: `Net değil. Fiyat eski seviyesine dönmüş olabilir, piyasa da çıkmadı.`,
+    };
+  }
+  if (deepMemoryDeal(memoryOff, input.samples, input.threshold) || (discount >= input.threshold && input.samples >= 2)) {
+    return {
+      verdict: "evet",
+      discount: Math.round(discount * 10) / 10,
+      marketMedian: null,
+      marketSamples: 0,
+      detail: `Evet. Piyasa bulunamadı, Depo ${tl(input.price)} TL görünüyor. Sen bak.`,
+    };
+  }
   return {
     verdict: "kararsiz",
     discount: Math.round(discount * 10) / 10,
@@ -225,7 +243,7 @@ export function assertVerdicts(): void {
     threshold: 50,
     history: [156, 156, 150, 47],
   });
-  if (selpak?.verdict !== "kararsiz") throw new Error("piyasasız Selpak EVET oldu");
+  if (selpak?.verdict !== "evet") throw new Error("piyasasız Selpak kaçtı");
   const selpakYes = decide({
     price: 47,
     listPrice: 47,
@@ -275,7 +293,7 @@ export function assertVerdicts(): void {
     title: "iPhone 17 Pro Max",
     history: [180000, 175000, 120000],
   });
-  if (phoneWait?.verdict === "evet") throw new Error("iPhone piyasasız telegram attı");
+  if (phoneWait?.verdict !== "evet") throw new Error("iPhone piyasasız fırsat kaçtı");
   const phone = decide({
     price: 120000,
     listPrice: 180000,
