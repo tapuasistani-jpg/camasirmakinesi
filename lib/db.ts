@@ -3,7 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { DEPO_AISLES, DEPO_QUERIES, SEARCH_URL, depoQueryLabel, fakeListPrice, huntFloor, keepNewPrice, priceBelongs, titleFits } from "@/lib/amazon";
 import type { ProductCard } from "@/lib/amazon";
 import type { Status } from "@/lib/types";
-import { cameBackToOldPrice, dealThreshold, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
+import { cameBackToOldPrice, dealThreshold, memoryWas, realSaleHigh, percentOff, type Verdict } from "@/lib/verdict";
 
 type Sql = ReturnType<typeof neon>;
 type Row = Record<string, unknown>;
@@ -390,7 +390,7 @@ export async function observedHigh(asin: string): Promise<{ high: number | null;
   const points = (await db()`SELECT price FROM price_points WHERE asin = ${asin} ORDER BY seen_at ASC, id ASC`) as Row[];
   const history = points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0);
   return {
-    high: cameBackToOldPrice(history) ? null : realSaleHigh(history),
+    high: memoryWas(history),
     samples: history.length,
     history,
   };
@@ -727,7 +727,7 @@ async function healPhantomHighs(): Promise<void> {
   await sql`UPDATE watch_query w SET highest_price = s.high
     FROM (SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin) s
     WHERE w.cheapest_asin = s.asin AND COALESCE(w.highest_price, 0) > s.high * 1.04`;
-  const alerts = (await sql`SELECT id, asin, title, price, highest_price, verdict
+  const alerts = (await sql`SELECT id, asin, title, price, highest_price, verdict, market_median
     FROM alerts WHERE COALESCE(dismissed, 0) = 0 AND verdict IN ('evet', 'bak')`) as Row[];
   for (const row of alerts) {
     const seen = await observedHigh(String(row.asin));
@@ -738,22 +738,22 @@ async function healPhantomHighs(): Promise<void> {
     const timeline = Math.abs(seen.history[seen.history.length - 1] - price) / Math.max(price, 1) > 0.01
       ? [...seen.history, price]
       : seen.history;
-    const bounce = cameBackToOldPrice(timeline);
-    const backToFirst = first != null && Math.abs(price - first) / first <= 0.08 && (stored ?? 0) > first * 1.12;
-    const honest = bounce ? first : seen.high;
-    if (bounce || backToFirst) {
+    const was = memoryWas(timeline);
+    const bounce = cameBackToOldPrice(timeline) || (first != null && Math.abs(price - first) / first <= 0.08 && (stored ?? 0) > first * 1.12);
+    const noMarket = num(row.market_median) == null;
+    if (String(row.verdict) === "evet" && noMarket && (bounce || was == null)) {
       await sql`UPDATE alerts SET highest_price = ${first}, dismissed = 1 WHERE id = ${row.id}`;
       await sql`UPDATE products SET highest_price = ${first} WHERE asin = ${String(row.asin)}`;
       await sql`UPDATE pending SET highest_price = ${first} WHERE asin = ${String(row.asin)}`;
       continue;
     }
-    if (honest == null || stored == null || stored <= honest * 1.04) continue;
-    const off = percentOff(price, honest);
-    const gate = dealThreshold(honest, 20, String(row.title ?? ""));
+    if (was == null || stored == null || stored <= was * 1.04) continue;
+    const off = percentOff(price, was);
+    const gate = dealThreshold(was, 20, String(row.title ?? ""));
     if (off < gate) {
-      await sql`UPDATE alerts SET highest_price = ${honest}, dismissed = 1 WHERE id = ${row.id}`;
+      await sql`UPDATE alerts SET highest_price = ${was}, dismissed = 1 WHERE id = ${row.id}`;
     } else {
-      await sql`UPDATE alerts SET highest_price = ${honest} WHERE id = ${row.id}`;
+      await sql`UPDATE alerts SET highest_price = ${was} WHERE id = ${row.id}`;
     }
   }
 }

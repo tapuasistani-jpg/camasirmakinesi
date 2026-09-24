@@ -129,6 +129,18 @@ export function cameBackToOldPrice(prices: number[]): boolean {
   return left && hadBefore;
 }
 
+// İlk gördüğümüz fiyat. Ortadaki zıplama "biz gördük" olmaz. Şu an ilk fiyattan ucuz değilse inen yoktur.
+export function memoryWas(prices: number[]): number | null {
+  const clean = prices.filter((price) => Number.isFinite(price) && price > 0);
+  if (clean.length < 2) return null;
+  const open = clean[0];
+  const current = clean[clean.length - 1];
+  if (!open || !current) return null;
+  if (current >= open * 0.96) return null;
+  if (cameBackToOldPrice(clean)) return null;
+  return open;
+}
+
 // Google'da dönen 550 TL, Amazon'un eski şişirme etiketi. Piyasa sayma.
 export function withoutFakeAnchors(prices: number[], amazon: number, list: number | null, high: number | null): number[] {
   const anchors = [list, high].filter((value): value is number => value != null && value >= amazon * 1.7);
@@ -157,7 +169,9 @@ export function decide(input: {
         input.price,
       ];
   const timeline = input.history?.length ? [...input.history, input.price] : series;
-  const trustedHigh = cameBackToOldPrice(timeline) ? null : realSaleHigh(series);
+  const trustedHigh = input.history?.length
+    ? memoryWas(timeline)
+    : (cameBackToOldPrice(timeline) ? null : realSaleHigh(series));
   const memoryOff = input.samples >= 2 ? percentOff(input.price, trustedHigh) : 0;
   const discount = Math.max(listOff, memoryOff);
   if (discount < input.threshold) return null;
@@ -331,6 +345,9 @@ export function assertVerdicts(): void {
   if (hike?.verdict === "evet") throw new Error("attırıp eski fiyata inen ayakkabı fırsat sayıldı");
   if (displayWas(122, 520000, null) != null) throw new Error("520 bin sahte eski fiyat kaldı");
   if (displayWas(46999, 71430, null) !== 71430) throw new Error("dürüst eski fiyat kaçtı");
+  if (memoryWas([90199, 137703, 90199]) != null) throw new Error("ilk 90'a dönen Fold inmiş sandı");
+  if (memoryWas([156, 156, 150, 47]) !== 156) throw new Error("Selpak ilk fiyatı kaçtı");
+  if (memoryWas([77899, 99899, 97899]) != null) throw new Error("ilk 77 bin sonra 97 bin inmiş sandı");
   if (displayWas(97899, 99899, 166399) !== 99899) throw new Error("çizili 166 bin biz gördük oldu");
   const phantom = decide({
     price: 97899,
