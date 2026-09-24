@@ -113,11 +113,13 @@ export function realSaleHigh(prices: number[]): number | null {
   return max;
 }
 
-// 6399 → 10500 → 6399. Eski fiyata dönüş indirim değil.
+// 90 → 137 → 90. İlk gördüğümüz fiyata dönüş indirim değil.
 export function cameBackToOldPrice(prices: number[]): boolean {
   if (prices.length < 3) return false;
   const current = prices[prices.length - 1];
   if (!current) return false;
+  const open = prices[0];
+  if (open && Math.abs(current - open) / open <= 0.08 && prices.some((price) => price > open * 1.12)) return true;
   let end = prices.length - 1;
   while (end > 0 && Math.abs(prices[end - 1] - current) / current <= 0.08) end -= 1;
   if (end < 2) return false;
@@ -305,6 +307,18 @@ export function assertVerdicts(): void {
   });
   if (phone?.verdict !== "evet") throw new Error("iPhone yüzde 33 piyasaya göre kaçtı");
   if (!cameBackToOldPrice([6399, 7875, 10500, 6399])) throw new Error("eski fiyata dönüş kaçtı");
+  if (!cameBackToOldPrice([90199, 137703, 90199])) throw new Error("90-137-90 Fold dönüş kaçtı");
+  const foldBack = decide({
+    price: 90199,
+    listPrice: null,
+    highestPrice: 137703,
+    samples: 3,
+    marketPrices: [],
+    threshold: 20,
+    title: "Samsung Galaxy Z Fold7",
+    history: [90199, 137703, 90199],
+  });
+  if (foldBack?.verdict === "evet") throw new Error("90 görüp 137 deyip 90'a dönen Fold fırsat oldu");
   const hike = decide({
     price: 6399,
     listPrice: 10500,

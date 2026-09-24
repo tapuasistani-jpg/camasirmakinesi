@@ -727,18 +727,30 @@ async function healPhantomHighs(): Promise<void> {
   await sql`UPDATE watch_query w SET highest_price = s.high
     FROM (SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin) s
     WHERE w.cheapest_asin = s.asin AND COALESCE(w.highest_price, 0) > s.high * 1.04`;
-  const highs = (await sql`SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin`) as Row[];
-  const byAsin = new Map(highs.map((row) => [String(row.asin), num(row.high)]));
   const alerts = (await sql`SELECT id, asin, title, price, highest_price, verdict
-    FROM alerts WHERE COALESCE(dismissed, 0) = 0 AND highest_price IS NOT NULL`) as Row[];
+    FROM alerts WHERE COALESCE(dismissed, 0) = 0 AND verdict IN ('evet', 'bak')`) as Row[];
   for (const row of alerts) {
-    const honest = byAsin.get(String(row.asin)) ?? null;
-    const stored = num(row.highest_price);
-    if (honest == null || stored == null || stored <= honest * 1.04) continue;
+    const seen = await observedHigh(String(row.asin));
+    if (!seen.history.length) continue;
     const price = Number(row.price);
+    const first = seen.history[0];
+    const stored = num(row.highest_price);
+    const timeline = Math.abs(seen.history[seen.history.length - 1] - price) / Math.max(price, 1) > 0.01
+      ? [...seen.history, price]
+      : seen.history;
+    const bounce = cameBackToOldPrice(timeline);
+    const backToFirst = first != null && Math.abs(price - first) / first <= 0.08 && (stored ?? 0) > first * 1.12;
+    const honest = bounce ? first : seen.high;
+    if (bounce || backToFirst) {
+      await sql`UPDATE alerts SET highest_price = ${first}, dismissed = 1 WHERE id = ${row.id}`;
+      await sql`UPDATE products SET highest_price = ${first} WHERE asin = ${String(row.asin)}`;
+      await sql`UPDATE pending SET highest_price = ${first} WHERE asin = ${String(row.asin)}`;
+      continue;
+    }
+    if (honest == null || stored == null || stored <= honest * 1.04) continue;
     const off = percentOff(price, honest);
     const gate = dealThreshold(honest, 20, String(row.title ?? ""));
-    if (String(row.verdict) === "evet" && off < gate) {
+    if (off < gate) {
       await sql`UPDATE alerts SET highest_price = ${honest}, dismissed = 1 WHERE id = ${row.id}`;
     } else {
       await sql`UPDATE alerts SET highest_price = ${honest} WHERE id = ${row.id}`;

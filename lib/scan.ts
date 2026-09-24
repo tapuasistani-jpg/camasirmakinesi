@@ -26,7 +26,7 @@ import {
 } from "@/lib/db";
 import { searchPrices } from "@/lib/market";
 import { deleteMessage, formatAlert, sendMessage } from "@/lib/telegram";
-import { dealThreshold, decide, deepMemoryDeal, percentOff } from "@/lib/verdict";
+import { cameBackToOldPrice, dealThreshold, decide, deepMemoryDeal, percentOff } from "@/lib/verdict";
 
 const BROWSER_HEADERS = {
   "User-Agent": USER_AGENT,
@@ -122,7 +122,7 @@ export async function judgeOne(): Promise<number> {
   const maxTries = deep ? 3 : 2;
   if (tries >= maxTries) {
     const listOff = percentOff(price, listPrice);
-    const wave = memoryOff >= gate && samples >= 2 && highest != null;
+    const wave = memoryOff >= gate && samples >= 2 && highest != null && !cameBackToOldPrice(seen.history);
     await retractBak(asin, wave ? "birak" : "iptal");
     await insertAlert({
       asin,
