@@ -20,6 +20,7 @@ import {
   takePending,
   writeAisle,
   writeAisleCursor,
+  observedHigh,
   upsertProduct,
   writeState,
 } from "@/lib/db";
@@ -110,8 +111,9 @@ export async function judgeOne(): Promise<number> {
   const tries = await bumpPending(asin);
   const price = Number(pending.price);
   const listPrice = pending.list_price == null ? null : Number(pending.list_price);
-  const highest = pending.highest_price == null ? null : Number(pending.highest_price);
-  const samples = Number(pending.samples ?? 1);
+  const seen = await observedHigh(asin);
+  const highest = seen.high;
+  const samples = seen.samples || Number(pending.samples ?? 1);
   const config = await getConfig();
   const title = String(pending.title ?? "");
   const gate = dealThreshold(highest || price, config.minDiscount, title);
@@ -120,7 +122,7 @@ export async function judgeOne(): Promise<number> {
   const maxTries = deep ? 3 : 2;
   if (tries >= maxTries) {
     const listOff = percentOff(price, listPrice);
-    const wave = memoryOff >= gate && samples >= 2;
+    const wave = memoryOff >= gate && samples >= 2 && highest != null;
     await retractBak(asin, wave ? "birak" : "iptal");
     await insertAlert({
       asin,
@@ -169,7 +171,7 @@ export async function judgeOne(): Promise<number> {
     marketPrices,
     threshold: gate,
     title,
-    history: highest != null ? [highest, price] : [price],
+    history: seen.history.length ? seen.history : [price],
   });
   await dropPending(asin);
   if (!verdict) {

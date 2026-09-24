@@ -19,11 +19,9 @@ export function readableTitle(title: string): string {
     .trim();
 }
 
-export function displayWas(price: number, highest: number | null, list: number | null): number | null {
-  const opts = [highest, list].filter((value): value is number => value != null && value > price * 1.04);
-  const sane = opts.filter((value) => value <= price * 8);
-  if (!sane.length) return null;
-  return Math.max(...sane);
+export function displayWas(price: number, highest: number | null, _list: number | null): number | null {
+  if (highest != null && highest > price * 1.04 && highest <= price * 8) return highest;
+  return null;
 }
 
 export function dealWhy(input: { price: number; was: number | null; market: number | null; detail: string }): string {
@@ -150,11 +148,12 @@ export function decide(input: {
   history?: number[];
 }): Verdict | null {
   const listOff = percentOff(input.price, input.listPrice);
-  const series = [
-    ...(input.highestPrice != null ? [input.highestPrice] : []),
-    ...(input.history ?? []),
-    input.price,
-  ];
+  const series = input.history?.length
+    ? [...input.history, input.price]
+    : [
+        ...(input.highestPrice != null ? [input.highestPrice] : []),
+        input.price,
+      ];
   const timeline = input.history?.length ? [...input.history, input.price] : series;
   const trustedHigh = cameBackToOldPrice(timeline) ? null : realSaleHigh(series);
   const memoryOff = input.samples >= 2 ? percentOff(input.price, trustedHigh) : 0;
@@ -318,4 +317,16 @@ export function assertVerdicts(): void {
   if (hike?.verdict === "evet") throw new Error("attırıp eski fiyata inen ayakkabı fırsat sayıldı");
   if (displayWas(122, 520000, null) != null) throw new Error("520 bin sahte eski fiyat kaldı");
   if (displayWas(46999, 71430, null) !== 71430) throw new Error("dürüst eski fiyat kaçtı");
+  if (displayWas(97899, 99899, 166399) !== 99899) throw new Error("çizili 166 bin biz gördük oldu");
+  const phantom = decide({
+    price: 97899,
+    listPrice: 166399,
+    highestPrice: 166399,
+    samples: 8,
+    marketPrices: [],
+    threshold: 20,
+    title: "ASUS PRIME GeForce RTX 5070 Ti",
+    history: [77899, 85225, 86227, 89899, 85044, 82863, 99899, 97899],
+  });
+  if (phantom?.verdict === "evet") throw new Error("çizili 166 bin hafıza fırsatı oldu");
 }

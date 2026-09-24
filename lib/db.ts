@@ -199,17 +199,12 @@ export async function applyWatchHunt(query: string, item: ProductCard): Promise<
   const sql = db();
   const rows = (await sql`SELECT highest_price, base_price, cheapest_price, high_samples FROM watch_query WHERE query = ${query}`) as Row[];
   if (!rows.length) return { hit: false, base: null, target: null };
-  const prevHigh = num(rows[0].highest_price) ?? num(rows[0].cheapest_price);
-  const seenHigh = num(rows[0].high_samples) ?? 0;
+  const seen = await observedHigh(item.asin);
+  const prevHigh = seen.high;
   const config = await getConfig();
   const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount, item.title) : config.minDiscount;
   const drop = prevHigh != null ? percentOff(item.price, prevHigh) : 0;
-  const confirmed = seenHigh >= 2;
-  const hit = drop >= gate && confirmed;
-  const adoptCheap = drop >= gate && !confirmed;
-  const nextHigh = adoptCheap ? item.price : Math.max(prevHigh ?? item.price, item.price);
-  const sameBand = prevHigh != null && !adoptCheap && Math.abs(item.price - nextHigh) / nextHigh <= 0.08;
-  const nextSamples = adoptCheap ? 1 : (sameBand || item.price >= (prevHigh ?? 0) ? seenHigh + 1 : seenHigh);
+  const hit = Boolean(prevHigh && drop >= gate && seen.samples >= 2);
   await sql`UPDATE watch_query SET
     cheapest_asin = ${item.asin},
     cheapest_price = ${item.price},
@@ -217,8 +212,8 @@ export async function applyWatchHunt(query: string, item: ProductCard): Promise<
     url = ${item.url},
     image = COALESCE(${item.image}, image),
     base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price}),
-    highest_price = ${nextHigh},
-    high_samples = ${nextSamples}
+    highest_price = ${prevHigh ?? item.price},
+    high_samples = ${seen.samples}
     WHERE query = ${query}`;
   return { hit, base: prevHigh, target: null };
 }
@@ -233,23 +228,19 @@ export async function watchDrop(item: ProductCard): Promise<{ hit: boolean; base
   const sql = db();
   const rows = (await sql`SELECT highest_price, base_price, high_samples FROM watch WHERE asin = ${item.asin}`) as Row[];
   if (!rows.length) return { hit: false, base: null, target: null };
-  const prevHigh = num(rows[0].highest_price) ?? num(rows[0].base_price);
-  const seenHigh = num(rows[0].high_samples) ?? 0;
+  const seen = await observedHigh(item.asin);
+  const prevHigh = seen.high;
   const config = await getConfig();
   const gate = prevHigh != null ? dealThreshold(prevHigh, config.minDiscount, item.title) : config.minDiscount;
   const drop = prevHigh != null ? percentOff(item.price, prevHigh) : 0;
-  const hit = drop >= gate && seenHigh >= 2;
-  const adoptCheap = drop >= gate && seenHigh < 2;
-  const nextHigh = adoptCheap ? item.price : Math.max(prevHigh ?? item.price, item.price);
-  const sameBand = prevHigh != null && !adoptCheap && Math.abs(item.price - nextHigh) / nextHigh <= 0.08;
-  const nextSamples = adoptCheap ? 1 : (sameBand || item.price >= (prevHigh ?? 0) ? seenHigh + 1 : seenHigh);
+  const hit = Boolean(prevHigh && drop >= gate && seen.samples >= 2);
   await sql`UPDATE watch SET
     title = COALESCE(NULLIF(${item.title}, ''), title),
     url = ${item.url},
     image = COALESCE(${item.image}, image),
     base_price = LEAST(COALESCE(base_price, ${item.price}), ${item.price}),
-    highest_price = ${nextHigh},
-    high_samples = ${nextSamples}
+    highest_price = ${prevHigh ?? item.price},
+    high_samples = ${seen.samples}
     WHERE asin = ${item.asin}`;
   return { hit, base: prevHigh, target: null };
 }
@@ -395,6 +386,16 @@ export async function addLog(level: string, message: string): Promise<void> {
   console.log(`[${level}] ${message}`);
 }
 
+export async function observedHigh(asin: string): Promise<{ high: number | null; samples: number; history: number[] }> {
+  const points = (await db()`SELECT price FROM price_points WHERE asin = ${asin} ORDER BY seen_at ASC, id ASC`) as Row[];
+  const history = points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0);
+  return {
+    high: cameBackToOldPrice(history) ? null : realSaleHigh(history),
+    samples: history.length,
+    history,
+  };
+}
+
 export async function upsertProduct(item: ProductCard): Promise<{ highest: number; samples: number; inserted: boolean; trustedHigh: number | null }> {
   const sql = db();
   const existing = (await sql`SELECT * FROM products WHERE asin = ${item.asin}`) as Row[];
@@ -414,24 +415,26 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
   const row = existing[0];
   const previous = num(row.last_price) ?? item.price;
   if (!keepNewPrice(item.title, previous, item.price)) {
-    const count = (await sql`SELECT COUNT(*)::int AS n FROM price_points WHERE asin = ${item.asin}`) as Row[];
-    const points = (await sql`SELECT price FROM price_points WHERE asin = ${item.asin} ORDER BY seen_at ASC, id ASC`) as Row[];
-    const history = points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0);
-    await sql`UPDATE products SET last_seen = NOW() WHERE asin = ${item.asin}`;
+    const seen = await observedHigh(item.asin);
+    await sql`UPDATE products SET last_seen = NOW(), highest_price = ${seen.high ?? previous} WHERE asin = ${item.asin}`;
     return {
-      highest: num(row.highest_price) ?? previous,
-      samples: num(count[0]?.n) ?? 1,
+      highest: seen.high ?? previous,
+      samples: seen.samples || 1,
       inserted: false,
-      trustedHigh: cameBackToOldPrice(history) ? null : realSaleHigh(history),
+      trustedHigh: seen.high,
     };
   }
-  const highest = Math.max(num(row.highest_price) ?? item.price, item.price);
   const lowest = Math.min(num(row.lowest_price) ?? item.price, item.price);
   const storedList = num(row.list_price);
   const incoming = item.listPrice != null && fakeListPrice(item.title, item.price, item.listPrice) ? null : item.listPrice;
   const keptStored = storedList != null && !fakeListPrice(item.title, item.price, storedList) ? storedList : null;
   const listPrice = incoming ?? keptStored;
   const inserted = Math.abs(previous - item.price) > 0.009;
+  if (inserted) {
+    await sql`INSERT INTO price_points (asin, price, list_price) VALUES (${item.asin}, ${item.price}, ${listPrice})`;
+  }
+  const seen = await observedHigh(item.asin);
+  const highest = seen.high ?? item.price;
   await sql`UPDATE products SET
     title = ${item.title},
     url = ${item.url},
@@ -443,14 +446,7 @@ export async function upsertProduct(item: ProductCard): Promise<{ highest: numbe
     lowest_price = ${lowest},
     last_seen = NOW()
     WHERE asin = ${item.asin}`;
-  if (inserted) {
-    await sql`INSERT INTO price_points (asin, price, list_price) VALUES (${item.asin}, ${item.price}, ${listPrice})`;
-  }
-  const count = (await sql`SELECT COUNT(*)::int AS n FROM price_points WHERE asin = ${item.asin}`) as Row[];
-  const points = (await sql`SELECT price FROM price_points WHERE asin = ${item.asin} ORDER BY seen_at ASC, id ASC`) as Row[];
-  const history = points.map((row) => Number(row.price)).filter((price) => Number.isFinite(price) && price > 0);
-  const trustedHigh = cameBackToOldPrice(history) ? null : realSaleHigh(history);
-  return { highest, samples: num(count[0]?.n) ?? 1, inserted, trustedHigh };
+  return { highest, samples: seen.samples || 1, inserted, trustedHigh: seen.high };
 }
 
 export async function needsFreshVerdict(asin: string, price: number): Promise<boolean> {
@@ -474,7 +470,7 @@ export async function enqueuePending(item: ProductCard, memory: { highest: numbe
       title = EXCLUDED.title,
       price = EXCLUDED.price,
       list_price = EXCLUDED.list_price,
-      highest_price = GREATEST(pending.highest_price, EXCLUDED.highest_price),
+      highest_price = EXCLUDED.highest_price,
       samples = EXCLUDED.samples,
       priority = GREATEST(pending.priority, EXCLUDED.priority)`;
 }
@@ -717,8 +713,42 @@ function blankStatus(message: string): Status {
   };
 }
 
+async function healPhantomHighs(): Promise<void> {
+  const sql = db();
+  await sql`UPDATE products p SET highest_price = s.high
+    FROM (SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin) s
+    WHERE p.asin = s.asin AND COALESCE(p.highest_price, 0) > s.high * 1.04`;
+  await sql`UPDATE pending p SET highest_price = s.high
+    FROM (SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin) s
+    WHERE p.asin = s.asin AND COALESCE(p.highest_price, 0) > s.high * 1.04`;
+  await sql`UPDATE watch w SET highest_price = s.high
+    FROM (SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin) s
+    WHERE w.asin = s.asin AND COALESCE(w.highest_price, 0) > s.high * 1.04`;
+  await sql`UPDATE watch_query w SET highest_price = s.high
+    FROM (SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin) s
+    WHERE w.cheapest_asin = s.asin AND COALESCE(w.highest_price, 0) > s.high * 1.04`;
+  const highs = (await sql`SELECT asin, MAX(price) AS high FROM price_points GROUP BY asin`) as Row[];
+  const byAsin = new Map(highs.map((row) => [String(row.asin), num(row.high)]));
+  const alerts = (await sql`SELECT id, asin, title, price, highest_price, verdict
+    FROM alerts WHERE COALESCE(dismissed, 0) = 0 AND highest_price IS NOT NULL`) as Row[];
+  for (const row of alerts) {
+    const honest = byAsin.get(String(row.asin)) ?? null;
+    const stored = num(row.highest_price);
+    if (honest == null || stored == null || stored <= honest * 1.04) continue;
+    const price = Number(row.price);
+    const off = percentOff(price, honest);
+    const gate = dealThreshold(honest, 20, String(row.title ?? ""));
+    if (String(row.verdict) === "evet" && off < gate) {
+      await sql`UPDATE alerts SET highest_price = ${honest}, dismissed = 1 WHERE id = ${row.id}`;
+    } else {
+      await sql`UPDATE alerts SET highest_price = ${honest} WHERE id = ${row.id}`;
+    }
+  }
+}
+
 async function dropFakeUnitDeals(): Promise<void> {
   const sql = db();
+  await healPhantomHighs();
   const alerts = (await sql`SELECT id, title, price, list_price FROM alerts WHERE price > 0 AND list_price > price * 4`) as Row[];
   for (const row of alerts) {
     if (!fakeListPrice(String(row.title ?? ""), Number(row.price), num(row.list_price))) continue;
