@@ -8,7 +8,8 @@
     "check": "tsx lib/self-check.ts",
     "tara-next": "tsx --tsconfig tsconfig.scripts.json scripts/tara-next.ts",
     "tara-feed": "tsx --tsconfig tsconfig.scripts.json scripts/tara-feed.ts",
-    "tara-ping": "tsx --tsconfig tsconfig.scripts.json scripts/tara-ping.ts"
+    "tara-ping": "tsx --tsconfig tsconfig.scripts.json scripts/tara-ping.ts",
+    "tara-telegram-test": "tsx --tsconfig tsconfig.scripts.json scripts/tara-telegram-test.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.1",

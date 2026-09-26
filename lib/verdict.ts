@@ -20,21 +20,25 @@ export function readableTitle(title: string): string {
 }
 
 export function displayWas(price: number, highest: number | null, _list: number | null): number | null {
-  if (highest != null && highest > price * 1.04 && highest <= price * 8) return highest;
+  if (highest != null && highest > price && highest <= price * 8) return highest;
   return null;
 }
 
 export function dealWhy(input: { price: number; was: number | null; market: number | null; detail: string }): string {
+  if (input.was && input.was > input.price) {
+    const drop = Math.round(((input.was - input.price) / input.was) * 100);
+    if (input.market) {
+      return `Eski ${tl(input.was)} TL → şimdi ${tl(input.price)} TL (%${drop}). Piyasa ~${tl(input.market)} TL.`;
+    }
+    return `Eski ${tl(input.was)} TL → şimdi ${tl(input.price)} TL (%${drop}). Piyasa henüz yok.`;
+  }
   if (input.market && input.price < input.market) {
-    return `Piyasa ~${tl(input.market)} TL, Amazon ${tl(input.price)} TL.`;
+    return `Piyasa ~${tl(input.market)} TL, Amazon ${tl(input.price)} TL. Eski Amazon fiyatı kayıtlı değil.`;
   }
   if (input.market && input.price >= input.market) {
     return `Piyasa ~${tl(input.market)} TL. Amazon buna yakın veya pahalı.`;
   }
   if (input.detail.startsWith("Bak.")) return input.detail.split(/(?<=\.)\s/).slice(0, 2).join(" ");
-  if (input.was && input.was > input.price) {
-    return `Biz ${tl(input.was)} TL görmüştük, şimdi ${tl(input.price)} TL. Piyasa henüz yok.`;
-  }
   const first = input.detail.split(/(?<=\.)\s/)[0] || input.detail;
   return first.slice(0, 180);
 }

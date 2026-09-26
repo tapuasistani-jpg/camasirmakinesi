@@ -1,0 +1,23 @@
+name: Telegram test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  yolla:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Paketler
+        run: npm install --no-audit --no-fund
+      - name: Telegrama yaz
+        env:
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: npx --no-install tsx --tsconfig tsconfig.scripts.json scripts/tara-telegram-test.ts

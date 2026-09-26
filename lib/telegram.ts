@@ -35,9 +35,14 @@ export function formatAlert(alert: AlertRow): string {
     esc(readableTitle(alert.title || "Ürün")),
     "",
   ];
-  if (was && was > price) lines.push(`${money(was)} → ${money(price)}`);
-  else lines.push(`Amazon: ${money(price)}`);
-  if (drop > 0) lines.push(`%${drop}`);
+  if (was && was > price) {
+    lines.push(`Eski: ${money(was)}`);
+    lines.push(`Şimdi: ${money(price)}`);
+  } else {
+    lines.push(`Şimdi: ${money(price)}`);
+    lines.push("Eski: kayıtlı değil");
+  }
+  if (drop > 0) lines.push(`%${drop} düşmüş`);
   if (market) lines.push(`Piyasa: ${money(market)}`);
   else lines.push("Piyasa: henüz yok");
   lines.push("", esc(dealWhy({ price, was, market, detail: alert.detail || "" })));
