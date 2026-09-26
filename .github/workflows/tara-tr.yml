@@ -23,6 +23,12 @@ jobs:
           node-version: "20"
       - name: Paketler
         run: npm install --no-audit --no-fund
+      - name: Veritabanı
+        env:
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+        run: npx --no-install tsx --tsconfig tsconfig.scripts.json scripts/tara-ping.ts site
       - name: Mağazayı tara
         env:
           POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
@@ -34,7 +40,7 @@ jobs:
         run: bash scripts/tara-loop.sh site
 
       - name: Bitince yine başlat
-        if: always()
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

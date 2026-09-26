@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+
 import { databaseUrl, ensureSchema } from "../lib/db";
 import { nextTarget, type ScanLane } from "../lib/feed";
 
@@ -9,10 +11,13 @@ async function main() {
     process.exit(1);
   }
   await ensureSchema();
-  process.stdout.write(JSON.stringify(await nextTarget(lane)));
+  const target = await nextTarget(lane);
+  const json = JSON.stringify(target);
+  writeFileSync("sira.json", json);
+  process.stdout.write(json);
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "sıradaki adres bulunamadı");
+  console.error(error instanceof Error ? error.stack || error.message : "sıradaki adres bulunamadı");
   process.exit(1);
 });
