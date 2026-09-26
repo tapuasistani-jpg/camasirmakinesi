@@ -15,138 +15,23 @@ jobs:
     timeout-minutes: 360
     permissions:
       actions: write
+      contents: read
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Paketler
+        run: npm install --no-audit --no-fund
       - name: Gece gündüz tara
         env:
-          SCAN_URL: ${{ secrets.SCAN_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           AMAZON_PROXY: ${{ secrets.AMAZON_PROXY }}
-        run: |
-          set +e
-          if [ -z "$SCAN_URL" ] || [ -z "$CRON_SECRET" ]; then
-            echo "GitHub secret eksik: SCAN_URL ve CRON_SECRET"
-            exit 1
-          fi
-          base="${SCAN_URL%/}"
-          auth="Authorization: Bearer $CRON_SECRET"
-          agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-          deadline=$((SECONDS + 200 * 60))
-          px=()
-          wait_tur=3
-          wait_diger=2
-          wait_ek=1
-          wait_hata=90
-          if [ -n "$AMAZON_PROXY" ]; then
-            proxy="$AMAZON_PROXY"
-            case "$proxy" in
-              *://*) ;;
-              *) proxy="http://$proxy" ;;
-            esac
-            px=(-x "$proxy")
-            wait_tur=1
-            wait_diger=1
-            wait_ek=0
-            wait_hata=45
-            echo "Amazon proxy acik, hizli tempo."
-          else
-            echo "Amazon proxy yok, normal tempo."
-          fi
-
-          curl -sS -m 30 "${px[@]}" -c jar.txt -A "$agent" \
-            -H "Accept-Language: tr-TR,tr;q=0.9" \
-            "https://www.amazon.com.tr/" -o /dev/null || true
-
-          target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next" || true)
-          while [ $SECONDS -lt $deadline ]; do
-            url=$(echo "$target" | jq -r '.url // empty' 2>/dev/null || true)
-            kind=$(echo "$target" | jq -r '.kind // "tur"' 2>/dev/null || true)
-            label=$(echo "$target" | jq -r '.label // ""' 2>/dev/null || true)
-            if [ -z "$url" ]; then
-              echo "Sıradaki adres gelmedi, 15 saniye bekleniyor."
-              sleep 15
-              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next" || true)
-              continue
-            fi
-            echo "$kind · $label · $url"
-            code=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-              -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-              -H "Upgrade-Insecure-Requests: 1" \
-              -H "Referer: https://www.amazon.com.tr/" \
-              -w '%{http_code}' -o sayfa.html "$url" || echo "000")
-            code=$(printf '%s' "$code" | tr -cd '0-9' | tail -c 3)
-            if [ "$code" != "200" ]; then
-              echo "Amazon $code, 2 saniye sonra ayni sayfa tekrar."
-              sleep 2
-              code=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-                -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-                -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-                -H "Upgrade-Insecure-Requests: 1" \
-                -H "Referer: https://www.amazon.com.tr/" \
-                -w '%{http_code}' -o sayfa.html "$url" || echo "000")
-              code=$(printf '%s' "$code" | tr -cd '0-9' | tail -c 3)
-            fi
-            if [ "$code" != "200" ]; then
-              if [ "$code" = "403" ] || [ "$code" = "429" ] || [ "$code" = "503" ]; then
-                echo "Amazon $code verdi, ${wait_hata} saniye bekleniyor."
-                sleep "$wait_hata"
-              else
-                echo "Amazon $code verdi, 8 saniye sonra ayni sayfa."
-                sleep 8
-              fi
-              continue
-            fi
-            jq -n --arg url "$url" --arg kind "$kind" --arg label "$label" --rawfile html sayfa.html \
-              '{url:$url,kind:$kind,label:$label,html:$html}' > gonder.json || true
-            cevap=$(curl -sS -m 55 -X POST -H "$auth" -H 'Content-Type: application/json' \
-              --data @gonder.json "$base/api/cron/feed" || true)
-            echo "$cevap" | head -c 400
-            echo
-            extras=$(echo "$target" | jq -c '.extra // []' 2>/dev/null || echo "[]")
-            yeni=$(echo "$cevap" | jq -c '.next // empty' 2>/dev/null || true)
-            if [ -n "$yeni" ] && [ "$yeni" != "null" ]; then
-              target="$yeni"
-            else
-              target=$(curl -sS -m 30 -H "$auth" "$base/api/cron/next" || true)
-            fi
-            if [ "$extras" != "[]" ] && [ "$extras" != "null" ]; then
-              echo "$extras" | jq -c '.[]' | while read -r extra; do
-                eurl=$(echo "$extra" | jq -r '.url // empty')
-                ekind=$(echo "$extra" | jq -r '.kind // "takip"')
-                elabel=$(echo "$extra" | jq -r '.label // ""')
-                [ -z "$eurl" ] && continue
-                echo "ek · $ekind · $elabel · $eurl"
-                ecode=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-                  -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-                  -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-                  -H "Referer: https://www.amazon.com.tr/" \
-                  -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
-                ecode=$(printf '%s' "$ecode" | tr -cd '0-9' | tail -c 3)
-                if [ "$ecode" != "200" ]; then
-                  sleep 2
-                  ecode=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-                    -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-                    -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-                    -H "Referer: https://www.amazon.com.tr/" \
-                    -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
-                  ecode=$(printf '%s' "$ecode" | tr -cd '0-9' | tail -c 3)
-                fi
-                [ "$ecode" != "200" ] && continue
-                jq -n --arg url "$eurl" --arg kind "$ekind" --arg label "$elabel" --rawfile html sayfa.html \
-                  '{url:$url,kind:$kind,label:$label,html:$html,quiet:true}' > gonder.json || true
-                curl -sS -m 55 -X POST -H "$auth" -H 'Content-Type: application/json' \
-                  --data @gonder.json "$base/api/cron/feed" | head -c 200 || true
-                echo
-                sleep "$wait_ek"
-              done
-            fi
-            if [ "$kind" = "tur" ]; then
-              sleep "$wait_tur"
-            else
-              sleep "$wait_diger"
-            fi
-          done
-          exit 0
+        run: bash scripts/tara-loop.sh depo
 
       - name: Bitince yine başlat
         if: always()

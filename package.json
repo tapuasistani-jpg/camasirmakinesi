@@ -5,7 +5,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "check": "tsx lib/self-check.ts"
+    "check": "tsx lib/self-check.ts",
+    "tara-next": "tsx scripts/tara-next.ts",
+    "tara-feed": "tsx scripts/tara-feed.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.1",
