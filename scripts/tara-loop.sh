@@ -10,6 +10,18 @@ run_tsx() {
   npx --no-install tsx --tsconfig tsconfig.scripts.json "$@"
 }
 
+# Amazon 302/301 ile asıl listeye atıyor. -L yoksa HTML gelmez, hafıza boş kalır.
+amazon_get() {
+  local dest="$1"
+  local out="$2"
+  curl -sS -L --max-redirs 8 --compressed -m 60 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
+    -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+    -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
+    -H "Upgrade-Insecure-Requests: 1" \
+    -H "Referer: https://www.amazon.com.tr/" \
+    -w '%{http_code}' -o "$out" "$dest" || echo "000"
+}
+
 sira_al() {
   rm -f sira.json
   run_tsx scripts/tara-next.ts "$lane" > /tmp/tara-next.out 2>/tmp/tara-next.err
@@ -47,7 +59,7 @@ else
   echo "Amazon proxy yok, $lane ajanı normal tempo."
 fi
 
-curl -sS -m 30 "${px[@]}" -c jar.txt -A "$agent" \
+curl -sS -L --max-redirs 5 -m 30 "${px[@]}" -c jar.txt -A "$agent" \
   -H "Accept-Language: tr-TR,tr;q=0.9" \
   "https://www.amazon.com.tr/" -o /dev/null || true
 
@@ -78,22 +90,12 @@ while [ $SECONDS -lt $deadline ]; do
   fi
   bos=0
   echo "$kind · $label · $url"
-  code=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-    -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-    -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-    -H "Upgrade-Insecure-Requests: 1" \
-    -H "Referer: https://www.amazon.com.tr/" \
-    -w '%{http_code}' -o sayfa.html "$url" || echo "000")
+  code=$(amazon_get "$url" sayfa.html)
   code=$(printf '%s' "$code" | tr -cd '0-9' | tail -c 3)
   if [ "$code" != "200" ]; then
     echo "Amazon $code, 2 saniye sonra ayni sayfa tekrar."
     sleep 2
-    code=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-      -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-      -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-      -H "Upgrade-Insecure-Requests: 1" \
-      -H "Referer: https://www.amazon.com.tr/" \
-      -w '%{http_code}' -o sayfa.html "$url" || echo "000")
+    code=$(amazon_get "$url" sayfa.html)
     code=$(printf '%s' "$code" | tr -cd '0-9' | tail -c 3)
   fi
   if [ "$code" != "200" ]; then
@@ -128,19 +130,11 @@ while [ $SECONDS -lt $deadline ]; do
       elabel=$(echo "$extra" | jq -r '.label // ""')
       [ -z "$eurl" ] && continue
       echo "ek · $ekind · $elabel · $eurl"
-      ecode=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-        -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-        -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-        -H "Referer: https://www.amazon.com.tr/" \
-        -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
+      ecode=$(amazon_get "$eurl" sayfa.html)
       ecode=$(printf '%s' "$ecode" | tr -cd '0-9' | tail -c 3)
       if [ "$ecode" != "200" ]; then
         sleep 2
-        ecode=$(curl -sS --compressed -m 45 "${px[@]}" -b jar.txt -c jar.txt -A "$agent" \
-          -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-          -H "Accept-Language: tr-TR,tr;q=0.9,en;q=0.8" \
-          -H "Referer: https://www.amazon.com.tr/" \
-          -w '%{http_code}' -o sayfa.html "$eurl" || echo "000")
+        ecode=$(amazon_get "$eurl" sayfa.html)
         ecode=$(printf '%s' "$ecode" | tr -cd '0-9' | tail -c 3)
       fi
       [ "$ecode" != "200" ] && continue
